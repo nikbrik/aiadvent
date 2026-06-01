@@ -1,7 +1,11 @@
+import logging
 import os
 
 import httpx
 
+from http_log import log_exchange
+
+logger = logging.getLogger("llm_demo")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
@@ -40,6 +44,16 @@ def chat_completion(prompt, temperature=0.7, top_p=1.0, top_k=40, model=None):
         "Content-Type": "application/json",
     }
 
+    log_exchange(
+        logger,
+        theme="openrouter_out",
+        title="→ OUT Flask → OpenRouter",
+        method="POST",
+        url=OPENROUTER_URL,
+        request_headers=headers,
+        body=body,
+    )
+
     try:
         response = httpx.post(
             OPENROUTER_URL,
@@ -52,6 +66,22 @@ def chat_completion(prompt, temperature=0.7, top_p=1.0, top_k=40, model=None):
     except httpx.HTTPError as exc:
         raise OpenRouterError(f"OpenRouter request failed: {exc}", 502)
 
+    try:
+        response_data = response.json()
+    except ValueError:
+        response_data = response.text
+
+    log_exchange(
+        logger,
+        theme="openrouter_in",
+        title="← IN  OpenRouter → Flask",
+        method="POST",
+        url=OPENROUTER_URL,
+        status=response.status_code,
+        response_headers=response.headers,
+        body=response_data,
+    )
+
     if response.status_code >= 400:
         raise OpenRouterError(
             f"OpenRouter returned HTTP {response.status_code}: {short_error(response)}",
@@ -59,7 +89,7 @@ def chat_completion(prompt, temperature=0.7, top_p=1.0, top_k=40, model=None):
         )
 
     try:
-        data = response.json()
+        data = response_data if isinstance(response_data, dict) else response.json()
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError, ValueError):
         raise OpenRouterError("OpenRouter response did not contain choices[0].message.content", 502)
