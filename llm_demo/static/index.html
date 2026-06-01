@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LLM REST demo</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">AI Advent · REST без SDK</p>
+        <h1>LLM через OpenRouter</h1>
+        <p class="lead">
+          Введите промпт, настройте параметры генерации и отправьте явный REST-запрос через Python backend.
+        </p>
+      </section>
+
+      <section class="card">
+        <form id="chat-form">
+          <label class="field">
+            <span>Промпт</span>
+            <textarea
+              id="prompt"
+              name="prompt"
+              rows="7"
+              placeholder="Например: объясни top_p простыми словами"
+              required
+            ></textarea>
+          </label>
+
+          <label class="field model-field">
+            <span>Модель</span>
+            <select id="model" name="model" disabled aria-disabled="true">
+              <option value="deepseek/deepseek-v4-flash" selected>deepseek 4 flash</option>
+            </select>
+            <small>Модель зафиксирована для демо и недоступна для выбора.</small>
+          </label>
+
+          <button
+            id="demo-prompt"
+            class="preset-prompt"
+            type="button"
+            data-prompt="Придумай 5 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Ответь коротко, только список."
+          >
+            <span class="preset-title">Демо-промпт для сравнения параметров</span>
+            <span class="preset-text">
+              Придумай 5 необычных причин, почему робот-бариста начал писать философские предсказания на стаканчиках.
+            </span>
+          </button>
+
+          <div class="controls">
+            <label class="slider">
+              <span class="slider-title">temperature <strong id="temperature-value">0.7</strong></span>
+              <input id="temperature" name="temperature" type="range" min="0" max="2" step="0.1" value="0.7">
+            </label>
+
+            <label class="slider">
+              <span class="slider-title">top_p <strong id="top-p-value">1.0</strong></span>
+              <input id="top-p" name="top_p" type="range" min="0" max="1" step="0.05" value="1">
+            </label>
+
+            <label class="slider">
+              <span class="slider-title">top_k <strong id="top-k-value">40</strong></span>
+              <input id="top-k" name="top_k" type="range" min="0" max="100" step="1" value="40">
+              <small>0 = не передавать параметр в API</small>
+            </label>
+          </div>
+
+          <button id="submit-button" class="submit-button" type="submit">Отправить</button>
+        </form>
+      </section>
+
+      <section class="card response-card">
+        <div class="response-head">
+          <h2>Ответ модели</h2>
+          <span id="status" class="status">Готово</span>
+        </div>
+        <pre id="response">Ответ появится здесь.</pre>
+      </section>
+    </main>
+
+    <script>
+      const form = document.querySelector("#chat-form");
+      const promptInput = document.querySelector("#prompt");
+      const modelInput = document.querySelector("#model");
+      const demoPromptButton = document.querySelector("#demo-prompt");
+      const responseBox = document.querySelector("#response");
+      const statusBox = document.querySelector("#status");
+      const submitButton = document.querySelector("#submit-button");
+
+      const temperature = document.querySelector("#temperature");
+      const topP = document.querySelector("#top-p");
+      const topK = document.querySelector("#top-k");
+
+      const temperatureValue = document.querySelector("#temperature-value");
+      const topPValue = document.querySelector("#top-p-value");
+      const topKValue = document.querySelector("#top-k-value");
+
+      function syncSliders() {
+        temperatureValue.textContent = Number(temperature.value).toFixed(1);
+        topPValue.textContent = Number(topP.value).toFixed(2).replace(/0$/, "");
+        topKValue.textContent = topK.value;
+      }
+
+      [temperature, topP, topK].forEach((slider) => {
+        slider.addEventListener("input", syncSliders);
+      });
+
+      demoPromptButton.addEventListener("click", () => {
+        promptInput.value = demoPromptButton.dataset.prompt;
+        form.requestSubmit();
+      });
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const payload = {
+          prompt: promptInput.value,
+          model: modelInput.value,
+          temperature: Number(temperature.value),
+          top_p: Number(topP.value),
+          top_k: Number(topK.value),
+        };
+
+        submitButton.disabled = true;
+        demoPromptButton.disabled = true;
+        statusBox.textContent = "Запрос...";
+        statusBox.className = "status loading";
+        responseBox.textContent = "Ждем ответ OpenRouter...";
+
+        try {
+          const result = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const data = await result.json();
+
+          if (!result.ok) {
+            throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
+          }
+
+          responseBox.textContent = data.content || "";
+          statusBox.textContent = "Готово";
+          statusBox.className = "status";
+        } catch (error) {
+          responseBox.textContent = error.message;
+          statusBox.textContent = "Ошибка";
+          statusBox.className = "status error";
+        } finally {
+          submitButton.disabled = false;
+          demoPromptButton.disabled = false;
+        }
+      });
+
+      syncSliders();
+    </script>
+  </body>
+</html>
