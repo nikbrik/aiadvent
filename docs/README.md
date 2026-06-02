@@ -7,6 +7,7 @@ This directory is the source of truth for project documentation.
 - `specs/assignment-1-rest-web-demo.md` - initial REST/web/Android demo requirements.
 - `specs/assignment-2-response-control.md` - response-control assignment requirements.
 - `agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider debugging notes, and guardrails for future Codex/Cursor sessions.
+- `agent-notes/caveman-install-playbook.md` - detailed LLM playbook for installing JuliusBrussee/caveman into other projects without accidentally invoking Claude hooks.
 
 ## Agent Entrypoints
 
@@ -15,7 +16,7 @@ This directory is the source of truth for project documentation.
 
 Do not copy long specs into tool-specific files. If a new AI tool needs project context, add a small adapter that references the canonical docs.
 
-There is no project-level `.agents/` directory right now. Add one only for reusable subagents or skills, not for assignment specs.
+The project-level `.agents/` directory is reserved for reusable skills, subagents, commands, and plugin metadata. Do not put assignment specs there.
 
 ## Update Rules
 

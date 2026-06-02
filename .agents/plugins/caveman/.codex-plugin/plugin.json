@@ -1,0 +1,31 @@
+{
+  "name": "caveman",
+  "version": "0.1.0+codex.655b7d9c",
+  "description": "Ultra-compressed agent communication modes from JuliusBrussee/caveman.",
+  "author": {
+    "name": "Julius Brussee",
+    "url": "https://github.com/JuliusBrussee"
+  },
+  "skills": "./skills/",
+  "repository": "https://github.com/JuliusBrussee/caveman",
+  "license": "MIT",
+  "keywords": [
+    "tokens",
+    "compression",
+    "caveman",
+    "skills"
+  ],
+  "interface": {
+    "displayName": "Caveman",
+    "shortDescription": "Use terse caveman modes to cut output tokens.",
+    "longDescription": "Project-local install of JuliusBrussee/caveman with caveman modes, terse commit/review helpers, compression support, stats, help, and cavecrew delegation guidance.",
+    "developerName": "Julius Brussee",
+    "category": "Productivity",
+    "capabilities": [
+      "skills",
+      "token-compression",
+      "agent-rules"
+    ],
+    "defaultPrompt": "Switch to /caveman ultra. For Russian-language prompts, answer in Russian. Keep technical terms, code, paths, commands, and error strings exact."
+  }
+}

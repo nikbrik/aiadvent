@@ -13,6 +13,12 @@ Canonical documentation:
 
 Tool-specific files must stay thin. Do not duplicate long specs inside `.cursor/rules`, `.agents`, or other assistant-specific locations; link to the docs above.
 
+## Caveman Token Mode
+
+Project-local caveman plugin is installed under `.agents/`. Default to `/caveman ultra` for terse agent output and answer in Russian for Russian-language prompts. Use sibling modes/helpers (`/caveman-commit`, `/caveman-review`, `/caveman-compress`, `/caveman-stats`, `cavecrew-*`) when relevant.
+
+Keep technical terms, code, paths, commands, and error strings exact. Drop caveman compression for security warnings, irreversible actions, confused users, or any case where terse phrasing risks ambiguity.
+
 ## LLM Demo Rules
 
 When editing `llm_demo/`, preserve these invariants:
