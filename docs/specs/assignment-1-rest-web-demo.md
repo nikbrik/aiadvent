@@ -154,7 +154,18 @@ Response 4xx/5xx:
 
 ```text
 aiadvent/
-  llm_rest_web_spec.md      # этот документ
+  README.md
+  AGENTS.md                 # project instructions for Codex-compatible agents
+  docs/
+    README.md               # карта документации
+    specs/
+      assignment-1-rest-web-demo.md
+      assignment-2-response-control.md
+    agent-notes/
+      llm-demo-assignment-2.md
+  .cursor/
+    rules/
+      aiadvent-project.mdc  # короткий Cursor adapter к AGENTS.md/docs
   llm_demo/
     server.py               # Flask + маршруты
     llm_client.py           # httpx → OpenRouter (чистый REST)
@@ -163,7 +174,7 @@ aiadvent/
       style.css             # опционально
     requirements.txt        # flask, httpx
     .env.example            # OPENROUTER_API_KEY=
-    README.md               # запуск и демо с телефона
+    README.md               # запуск демо
 ```
 
 ---
@@ -262,9 +273,10 @@ python server.py
 
 Для задания про контроль ответа LLM см.:
 
-- `llm_demo/ASSIGNMENT-2.md` - исходная постановка.
-- `llm_demo/ASSIGNMENT-2-IMPLEMENTATION-SPEC.md` - финальные решения, выбор провайдера, выводы отладки и guardrails для будущих Codex/Cursor сессий.
-- `.cursor/rules/llm-demo-assignment-2.mdc` - project rule для Cursor, которая указывает читать implementation spec при работе с `llm_demo/**`.
+- `docs/specs/assignment-2-response-control.md` - исходная постановка и требования.
+- `docs/agent-notes/llm-demo-assignment-2.md` - финальные решения, выбор провайдера, выводы отладки и guardrails для будущих Codex/Cursor сессий.
+- `AGENTS.md` - общий agent guide.
+- `.cursor/rules/aiadvent-project.mdc` - короткий Cursor adapter к `AGENTS.md` и `docs/`.
 
 Ключевой инвариант Assignment 2: один и тот же `user` prompt во всех режимах; контроль добавляется только через API-поля или system message.
 

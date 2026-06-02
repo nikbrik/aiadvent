@@ -1,7 +1,7 @@
 # Assignment 2 implementation notes
 
 This file records implementation and debugging decisions for future Codex and Cursor sessions.
-The assignment spec is in `ASSIGNMENT-2.md`; this file captures what was learned while making the demo work.
+The assignment spec is in `docs/specs/assignment-2-response-control.md`; this file captures what was learned while making the demo work.
 
 ## Final shape
 
