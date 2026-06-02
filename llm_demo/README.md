@@ -8,6 +8,8 @@
 - `llm_client.py` - низкоуровневый REST-запрос к OpenRouter через `httpx.post`.
 - `static/index.html` - vanilla HTML/JS UI.
 - `static/style.css` - адаптивные стили для desktop и Android Chrome.
+- `ASSIGNMENT-2.md` - задание про контроль ответа LLM.
+- `ASSIGNMENT-2-IMPLEMENTATION-SPEC.md` - решения, провайдеры, отладочные выводы и guardrails для Codex/Cursor.
 
 ## Запуск
 

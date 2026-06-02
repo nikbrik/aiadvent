@@ -1,0 +1,32 @@
+---
+description: LLM demo Assignment 2 response-control rules and debugging notes
+globs: "llm_demo/**"
+alwaysApply: false
+---
+
+When editing or testing `llm_demo`, read `llm_demo/ASSIGNMENT-2-IMPLEMENTATION-SPEC.md` first.
+
+Key invariants:
+
+- Keep exactly three control modes: `none`, `api`, `system`.
+- Keep the same `user` prompt in every mode.
+- `none`: same user message, sampling only.
+- `api`: same user message plus `max_tokens`, `stop`, `response_format`, provider pin.
+- `system`: system message plus same user message, no API control fields.
+- Do not split API control into extra UI modes.
+- Do not auto-fallback if OpenRouter returns 400 for `response_format`; show the error.
+- Keep the LLM request as explicit REST through `httpx.post`, not an SDK.
+
+Current working provider setup:
+
+- Model: `deepseek/deepseek-v4-flash`
+- API provider pin: `novita`
+- `allow_fallbacks=false`
+- `require_parameters=true`
+
+Testing reminders:
+
+- Use `PYTHONPYCACHEPREFIX=/private/tmp/aiadvent-pycache` for `py_compile` in Codex/macOS sandbox.
+- Use `llm_demo/.venv/bin/python`, not bare system `python3`, to run the Flask app.
+- Prefer no-network payload checks before real OpenRouter requests.
+- Only run real 3-mode OpenRouter comparisons when the user permits spending the key.

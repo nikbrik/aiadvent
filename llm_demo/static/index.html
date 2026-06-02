@@ -41,13 +41,29 @@
             id="demo-prompt"
             class="preset-prompt"
             type="button"
-            data-prompt="Придумай 5 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Ответь коротко, только список."
+            data-prompt="Придумай 5 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Для каждой причины добавь атмосферную деталь."
           >
-            <span class="preset-title">Демо-промпт для сравнения параметров</span>
+            <span class="preset-title">Контрастный демо-промпт</span>
             <span class="preset-text">
-              Придумай 5 необычных причин, почему робот-бариста начал писать философские предсказания на стаканчиках.
+              Prompt без “коротко” и “только список”: baseline разрастается, system/API ограничивают ответ.
             </span>
           </button>
+
+          <fieldset class="mode-group">
+            <legend>Режим контроля</legend>
+            <label class="mode-option">
+              <input type="radio" name="control_mode" value="none" checked>
+              <span>Без ограничений</span>
+            </label>
+            <label class="mode-option">
+              <input type="radio" name="control_mode" value="api">
+              <span>Контроль через API</span>
+            </label>
+            <label class="mode-option">
+              <input type="radio" name="control_mode" value="system">
+              <span>Контроль через system</span>
+            </label>
+          </fieldset>
 
           <div class="controls">
             <label class="slider">
@@ -67,7 +83,48 @@
             </label>
           </div>
 
-          <button id="submit-button" class="submit-button" type="submit">Отправить</button>
+          <section id="api-control-panel" class="control-panel" hidden>
+            <h2>API control</h2>
+            <div class="api-grid">
+              <label class="slider">
+                <span class="slider-title">max_tokens <strong id="max-tokens-value">120</strong></span>
+                <input id="max-tokens" name="max_tokens" type="range" min="20" max="512" step="10" value="120">
+              </label>
+
+              <label class="field compact-field">
+                <span>stop</span>
+                <input
+                  id="stop"
+                  name="stop"
+                  type="text"
+                  value="\n6., 6."
+                  placeholder="\n6., 6."
+                >
+                <small>Stop sequence не дает ответу перейти к 6-му пункту.</small>
+              </label>
+
+              <label class="field compact-field response-format-field">
+                <span>response_format</span>
+                <input id="response-format" name="response_format" type="text" value='{"type":"json_object"}' readonly>
+                <small>Формат ответа задается API-параметром, user prompt не меняется.</small>
+              </label>
+            </div>
+          </section>
+
+          <section id="system-control-panel" class="control-panel" hidden>
+            <label class="field">
+              <span>System message</span>
+              <textarea id="system-message" name="system_message" rows="7">Ты отвечаешь строго по правилам:
+1. Формат: нумерованный список из ровно 5 пунктов (1. … 2. … и т.д.).
+2. Длина: каждый пункт — не более 15 слов.
+3. Завершение: после пункта 5 сразу остановись. Не добавляй вступление, заключение и текст после списка.</textarea>
+            </label>
+          </section>
+
+          <div class="form-actions">
+            <button id="submit-button" class="submit-button" type="submit">Отправить выбранный режим</button>
+            <button id="compare-button" class="secondary-button" type="button">Сравнить 3 режима</button>
+          </div>
         </form>
       </section>
 
@@ -77,6 +134,15 @@
           <span id="status" class="status">Готово</span>
         </div>
         <pre id="response">Ответ появится здесь.</pre>
+        <div id="response-meta" class="response-meta">finish_reason и completion_tokens появятся после ответа.</div>
+      </section>
+
+      <section id="compare-card" class="card compare-card" hidden>
+        <div class="response-head">
+          <h2>Сравнение трех режимов</h2>
+          <span id="compare-status" class="status">Готово</span>
+        </div>
+        <div id="compare-grid" class="compare-grid"></div>
       </section>
     </main>
 
@@ -86,48 +152,186 @@
       const modelInput = document.querySelector("#model");
       const demoPromptButton = document.querySelector("#demo-prompt");
       const responseBox = document.querySelector("#response");
+      const responseMeta = document.querySelector("#response-meta");
       const statusBox = document.querySelector("#status");
       const submitButton = document.querySelector("#submit-button");
+      const compareButton = document.querySelector("#compare-button");
+      const compareCard = document.querySelector("#compare-card");
+      const compareGrid = document.querySelector("#compare-grid");
+      const compareStatus = document.querySelector("#compare-status");
+      const controlModeInputs = document.querySelectorAll("input[name='control_mode']");
+      const apiControlPanel = document.querySelector("#api-control-panel");
+      const systemControlPanel = document.querySelector("#system-control-panel");
 
       const temperature = document.querySelector("#temperature");
       const topP = document.querySelector("#top-p");
       const topK = document.querySelector("#top-k");
+      const maxTokens = document.querySelector("#max-tokens");
+      const stopSequences = document.querySelector("#stop");
+      const systemMessage = document.querySelector("#system-message");
 
       const temperatureValue = document.querySelector("#temperature-value");
       const topPValue = document.querySelector("#top-p-value");
       const topKValue = document.querySelector("#top-k-value");
+      const maxTokensValue = document.querySelector("#max-tokens-value");
+      const fixedResponseFormat = { type: "json_object" };
 
       function syncSliders() {
         temperatureValue.textContent = Number(temperature.value).toFixed(1);
         topPValue.textContent = Number(topP.value).toFixed(2).replace(/0$/, "");
         topKValue.textContent = topK.value;
+        maxTokensValue.textContent = maxTokens.value;
       }
 
-      [temperature, topP, topK].forEach((slider) => {
+      [temperature, topP, topK, maxTokens].forEach((slider) => {
         slider.addEventListener("input", syncSliders);
       });
 
-      demoPromptButton.addEventListener("click", () => {
-        promptInput.value = demoPromptButton.dataset.prompt;
-        form.requestSubmit();
-      });
+      function selectedControlMode() {
+        return document.querySelector("input[name='control_mode']:checked").value;
+      }
 
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
+      function syncControlPanels() {
+        const mode = selectedControlMode();
+        const isApi = mode === "api";
+        const isSystem = mode === "system";
 
+        apiControlPanel.hidden = !isApi;
+        systemControlPanel.hidden = !isSystem;
+        apiControlPanel.querySelectorAll("input").forEach((input) => {
+          input.disabled = !isApi;
+        });
+        systemMessage.disabled = !isSystem;
+      }
+
+      function renderMetadata(data) {
+        const meta = [];
+
+        if (data.finish_reason) {
+          meta.push(`finish_reason: ${data.finish_reason}`);
+        }
+
+        if (data.completion_tokens !== null && data.completion_tokens !== undefined) {
+          meta.push(`completion_tokens: ${data.completion_tokens}`);
+        }
+
+        responseMeta.textContent = meta.length ? meta.join(" · ") : "Метаданные в ответе OpenRouter отсутствуют.";
+      }
+
+      function responseContent(data) {
+        if (data.content !== null && data.content !== undefined && data.content !== "") {
+          return data.content;
+        }
+
+        return "content=null: OpenRouter/model не вернул видимый текст. Это частый edge case для response_format/json_object на отдельных провайдерах.";
+      }
+
+      function buildPayload(controlMode, includeAllControls = false) {
         const payload = {
           prompt: promptInput.value,
           model: modelInput.value,
+          control_mode: controlMode,
           temperature: Number(temperature.value),
           top_p: Number(topP.value),
           top_k: Number(topK.value),
         };
 
-        submitButton.disabled = true;
-        demoPromptButton.disabled = true;
+        if (controlMode === "api" || includeAllControls) {
+          payload.max_tokens = Number(maxTokens.value);
+          payload.stop = stopSequences.value;
+          payload.response_format = fixedResponseFormat;
+        }
+
+        if (controlMode === "system" || includeAllControls) {
+          payload.system_message = systemMessage.value;
+        }
+
+        return payload;
+      }
+
+      function setBusy(isBusy) {
+        submitButton.disabled = isBusy;
+        compareButton.disabled = isBusy;
+        demoPromptButton.disabled = isBusy;
+      }
+
+      function controlSummary(mode) {
+        if (mode === "system") {
+          return "system message: формат + длина + завершение";
+        }
+
+        if (mode === "api") {
+          return `API: формат=response_format, длина=max_tokens=${maxTokens.value}, завершение=stop, provider=Novita`;
+        }
+
+        return "только user prompt и sampling";
+      }
+
+      function createCompareItem(result) {
+        const item = document.createElement("article");
+        item.className = `compare-item mode-${result.control_mode || "unknown"}`;
+
+        const head = document.createElement("div");
+        head.className = "compare-item-head";
+
+        const title = document.createElement("h3");
+        title.textContent = result.label || result.control_mode || "Режим";
+
+        const badge = document.createElement("span");
+        badge.className = result.error ? "compare-badge error" : "compare-badge";
+        badge.textContent = result.error ? `HTTP ${result.status || "error"}` : result.finish_reason || "ok";
+
+        head.append(title, badge);
+
+        const controls = document.createElement("div");
+        controls.className = "compare-controls";
+        controls.textContent = controlSummary(result.control_mode);
+
+        const content = document.createElement("pre");
+        const hasNullContent = !result.error && (result.content === null || result.content === undefined || result.content === "");
+        content.className = result.error || hasNullContent ? "compare-output compare-output-error" : "compare-output";
+        content.textContent = result.error || responseContent(result);
+
+        const meta = document.createElement("div");
+        meta.className = "response-meta";
+        const charCount = result.content ? result.content.length : 0;
+        const metaItems = [];
+        if (result.completion_tokens !== null && result.completion_tokens !== undefined) {
+          metaItems.push(`${result.completion_tokens} completion tokens`);
+        }
+        if (charCount) {
+          metaItems.push(`${charCount} символов`);
+        }
+        meta.textContent = metaItems.length ? metaItems.join(" · ") : "Метаданные отсутствуют.";
+
+        item.append(head, controls, content, meta);
+        return item;
+      }
+
+      function renderCompareResults(results) {
+        compareGrid.replaceChildren(...results.map(createCompareItem));
+      }
+
+      controlModeInputs.forEach((input) => {
+        input.addEventListener("change", syncControlPanels);
+      });
+
+      demoPromptButton.addEventListener("click", () => {
+        promptInput.value = demoPromptButton.dataset.prompt;
+        promptInput.focus();
+      });
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const controlMode = selectedControlMode();
+        const payload = buildPayload(controlMode);
+
+        setBusy(true);
         statusBox.textContent = "Запрос...";
         statusBox.className = "status loading";
         responseBox.textContent = "Ждем ответ OpenRouter...";
+        responseMeta.textContent = "Метаданные появятся после ответа.";
 
         try {
           const result = await fetch("/api/chat", {
@@ -142,20 +346,62 @@
             throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
           }
 
-          responseBox.textContent = data.content || "";
+          responseBox.textContent = responseContent(data);
+          renderMetadata(data);
           statusBox.textContent = "Готово";
           statusBox.className = "status";
         } catch (error) {
           responseBox.textContent = error.message;
+          responseMeta.textContent = "Метаданные недоступны.";
           statusBox.textContent = "Ошибка";
           statusBox.className = "status error";
         } finally {
-          submitButton.disabled = false;
-          demoPromptButton.disabled = false;
+          setBusy(false);
+        }
+      });
+
+      compareButton.addEventListener("click", async () => {
+        if (!promptInput.value.trim()) {
+          form.reportValidity();
+          promptInput.focus();
+          return;
+        }
+
+        const payload = buildPayload("none", true);
+
+        setBusy(true);
+        compareCard.hidden = false;
+        compareStatus.textContent = "Запрос...";
+        compareStatus.className = "status loading";
+        compareGrid.textContent = "Запускаем три запроса с одним и тем же user prompt...";
+
+        try {
+          const result = await fetch("/api/compare", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const data = await result.json();
+
+          if (!result.ok) {
+            throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
+          }
+
+          renderCompareResults(data.results || []);
+          compareStatus.textContent = "Готово";
+          compareStatus.className = "status";
+        } catch (error) {
+          compareGrid.textContent = error.message;
+          compareStatus.textContent = "Ошибка";
+          compareStatus.className = "status error";
+        } finally {
+          setBusy(false);
         }
       });
 
       syncSliders();
+      syncControlPanels();
     </script>
   </body>
 </html>

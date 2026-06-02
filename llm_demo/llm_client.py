@@ -18,7 +18,17 @@ class OpenRouterError(Exception):
         self.status = status
 
 
-def chat_completion(prompt, temperature=0.7, top_p=1.0, top_k=40, model=None):
+def chat_completion(
+    messages,
+    temperature=0.7,
+    top_p=1.0,
+    top_k=40,
+    model=None,
+    max_tokens=None,
+    stop=None,
+    response_format=None,
+    provider=None,
+):
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise OpenRouterError("OPENROUTER_API_KEY is not set", 500)
@@ -26,18 +36,25 @@ def chat_completion(prompt, temperature=0.7, top_p=1.0, top_k=40, model=None):
     model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
     body = {
         "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        "messages": messages,
         "temperature": temperature,
         "top_p": top_p,
     }
 
     if top_k != 0:
         body["top_k"] = top_k
+
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+
+    if stop:
+        body["stop"] = stop
+
+    if response_format:
+        body["response_format"] = response_format
+
+    if provider:
+        body["provider"] = provider
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -83,14 +100,21 @@ def chat_completion(prompt, temperature=0.7, top_p=1.0, top_k=40, model=None):
     )
 
     if response.status_code >= 400:
+        status = response.status_code if response.status_code < 500 else 502
         raise OpenRouterError(
             f"OpenRouter returned HTTP {response.status_code}: {short_error(response)}",
-            502,
+            status,
         )
 
     try:
         data = response_data if isinstance(response_data, dict) else response.json()
-        return data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        usage = data.get("usage") or {}
+        return {
+            "content": choice["message"]["content"],
+            "finish_reason": choice.get("finish_reason"),
+            "completion_tokens": usage.get("completion_tokens"),
+        }
     except (KeyError, IndexError, TypeError, ValueError):
         raise OpenRouterError("OpenRouter response did not contain choices[0].message.content", 502)
 

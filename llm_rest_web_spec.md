@@ -258,7 +258,17 @@ python server.py
 
 ---
 
-## 12. Версия
+## 12. Дополнение: Assignment 2
+
+Для задания про контроль ответа LLM см.:
+
+- `llm_demo/ASSIGNMENT-2.md` - исходная постановка.
+- `llm_demo/ASSIGNMENT-2-IMPLEMENTATION-SPEC.md` - финальные решения, выбор провайдера, выводы отладки и guardrails для будущих Codex/Cursor сессий.
+- `.cursor/rules/llm-demo-assignment-2.mdc` - project rule для Cursor, которая указывает читать implementation spec при работе с `llm_demo/**`.
+
+Ключевой инвариант Assignment 2: один и тот же `user` prompt во всех режимах; контроль добавляется только через API-поля или system message.
+
+## 13. Версия
 
 | Поле | Значение |
 |------|----------|
