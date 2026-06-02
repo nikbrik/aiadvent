@@ -4,9 +4,9 @@ Real session token receipts. No AI estimation.
 
 ## What it does
 
-Reads the current Claude Code session log directly and reports actual input/output token usage plus estimated savings versus a non-caveman baseline. Numbers come from the JSONL session log on disk — the model itself does not compute or estimate them. Output is injected by the `caveman-mode-tracker` hook, which intercepts `/caveman-stats` and returns the formatted stats as a blocked-decision reason.
+Upstream caveman-stats is a Claude Code hook feature. In this project-local install, JS hooks, shell hooks, statusline scripts, and plugin-level install scripts are not vendored. No local `caveman-mode-tracker` hook intercepts `/caveman-stats`.
 
-Each run also writes a lifetime-savings suffix file used by the statusline badge (`⛏ 12.4k`).
+Installed executable caveman code in this repo is limited to `caveman-compress` Python scripts. Treat `caveman-stats` here as upstream documentation/reference unless hook files are installed separately outside this repo.
 
 ## How to invoke
 
@@ -26,4 +26,4 @@ Saved:    7,356 tokens (~65%)
 
 ## See also
 
-- [`SKILL.md`](./SKILL.md) — hook contract and mechanics
+- [`SKILL.md`](./SKILL.md) — project-local availability note
