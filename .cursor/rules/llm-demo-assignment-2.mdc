@@ -23,6 +23,8 @@ Current working provider setup:
 - API provider pin: `novita`
 - `allow_fallbacks=false`
 - `require_parameters=true`
+- Demo prompt asks for 10 items; API/system constrain output to 5.
+- API default `max_tokens=1600`; stop includes list item 6 and JSON key `"6"`.
 
 Testing reminders:
 

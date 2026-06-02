@@ -26,9 +26,9 @@ Do not split API control into separate UI modes. The user explicitly rejected a 
 ## Current defaults
 
 - Model: `deepseek/deepseek-v4-flash`
-- API mode `max_tokens`: `120`
-- API mode `stop` input: `\n6., 6.`
-- Parsed stop sequences: `["\n6.", "6."]`
+- API mode `max_tokens`: `1600`
+- API mode `stop` input: `\n6., **6., 6., "6"`
+- Parsed stop sequences: `["\n6.", "**6.", "6.", "\"6\""]`
 - API mode `response_format`: `{ "type": "json_object" }`
 - API mode OpenRouter provider pin:
 
@@ -46,17 +46,20 @@ Do not split API control into separate UI modes. The user explicitly rejected a 
 
 The original assignment example included text like "Ответь коротко, только список". That makes the demo less clear because it puts response-control instructions into the user prompt.
 
-The implemented demo prompt removes those restrictions:
+The implemented demo prompt removes those restrictions and asks for more items than constrained modes should return:
 
 ```text
-Придумай 5 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Для каждой причины добавь атмосферную деталь.
+Придумай 10 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Для каждой причины добавь атмосферную деталь.
 ```
 
 This makes the contrast visible:
 
-- baseline tends to add intro text, markdown and longer explanations;
-- system mode tends to follow format/length/completion instructions semantically;
-- API mode is bounded technically and can end mid-answer when `max_tokens` is reached.
+- baseline tends to answer the user request and produce up to 10 detailed items;
+- system mode tends to reduce the response to exactly 5 items because the system message says so;
+- API mode stops when the model starts item 6, while `max_tokens` remains a hard upper bound instead of the primary demonstration mechanism.
+- The stop list includes markdown/list forms and the JSON object key `"6"` because `response_format={"type":"json_object"}` can make providers emit numbered JSON keys instead of plain markdown list items.
+
+Do not use a prompt that asks for 5 items while API `stop` is configured for item 6. That makes the stop sequence redundant and weakens the demo. If `stop` is "before 6", the user prompt should ask for more than 5 items.
 
 ## Provider and model debugging notes
 
@@ -99,17 +102,17 @@ For this demo, use these signals instead:
 - visible output length/character count shows the difference for learners;
 - HTTP logs show which fields were actually sent.
 
-## Real run observed during implementation
+## Real run observed after prompt correction
 
-With the final defaults and provider pin, one browser compare run produced:
+With the corrected prompt that asks for 10 items, one browser compare run produced:
 
 | Mode | Finish reason | Observed output |
 | --- | --- | --- |
-| Baseline | `stop` | about `960 completion_tokens`, `2619` visible characters |
-| API | `length` | about `478 completion_tokens`, `340` visible characters |
-| System | `stop` | about `479 completion_tokens`, `537` visible characters |
+| Baseline | `stop` | about `1719 completion_tokens`, `3947` visible characters, includes item 6+ |
+| API | `stop` | about `1028 completion_tokens`, `1764` visible characters, stopped before item 6 |
+| System | `stop` | about `491 completion_tokens`, `507` visible characters, exactly 5 concise items |
 
-Do not treat these numbers as golden test fixtures. They are useful as a sanity check for the expected direction: baseline is longer; API can truncate; system is concise but instruction-based.
+Do not treat these numbers as golden test fixtures. The important direction is: baseline tries to answer 10 items; API stops before item 6; system returns 5 by instruction.
 
 ## Testing workflow
 
@@ -139,7 +142,7 @@ Use this style of check to prove that each mode assembles the correct payload wi
 
 ```bash
 cd llm_demo
-PYTHONPYCACHEPREFIX=/private/tmp/aiadvent-pycache ./.venv/bin/python -c "import json, server; calls=[]; prompt='same user prompt'; payload={'prompt':prompt,'model':'deepseek/deepseek-v4-flash','temperature':0.7,'top_p':1,'top_k':40,'max_tokens':120,'stop':chr(92)+'n6., 6.','response_format':{'type':'json_object'},'system_message':'system rules'}; server.chat_completion=lambda **kw: calls.append(kw) or {'content':'ok'}; [server.run_completion(payload, mode) for mode in ['none','api','system']]; print(json.dumps([{k:v for k,v in call.items() if k in ['messages','max_tokens','stop','response_format','provider']} for call in calls], ensure_ascii=False, indent=2))"
+PYTHONPYCACHEPREFIX=/private/tmp/aiadvent-pycache ./.venv/bin/python -c "import json, server; calls=[]; prompt='same user prompt'; payload={'prompt':prompt,'model':'deepseek/deepseek-v4-flash','temperature':0.7,'top_p':1,'top_k':40,'max_tokens':1600,'stop':chr(92)+'n6., **6., 6., \"6\"','response_format':{'type':'json_object'},'system_message':'system rules'}; server.chat_completion=lambda **kw: calls.append(kw) or {'content':'ok'}; [server.run_completion(payload, mode) for mode in ['none','api','system']]; print(json.dumps([{k:v for k,v in call.items() if k in ['messages','max_tokens','stop','response_format','provider']} for call in calls], ensure_ascii=False, indent=2))"
 ```
 
 Expected shape:

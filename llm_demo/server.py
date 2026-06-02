@@ -179,7 +179,7 @@ def build_messages(control_mode, prompt, system_message):
 def build_api_options(payload, control_mode):
     if control_mode == "api":
         return {
-            "max_tokens": parse_int(payload.get("max_tokens", 120), "max_tokens", 1, 4096),
+            "max_tokens": parse_int(payload.get("max_tokens", 1600), "max_tokens", 1, 4096),
             "stop": parse_stop_sequences(payload.get("stop")),
             "response_format": parse_response_format(payload.get("response_format")),
             "provider": {

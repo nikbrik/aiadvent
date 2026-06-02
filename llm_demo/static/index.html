@@ -41,11 +41,11 @@
             id="demo-prompt"
             class="preset-prompt"
             type="button"
-            data-prompt="Придумай 5 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Для каждой причины добавь атмосферную деталь."
+            data-prompt="Придумай 10 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Для каждой причины добавь атмосферную деталь."
           >
             <span class="preset-title">Контрастный демо-промпт</span>
             <span class="preset-text">
-              Prompt без “коротко” и “только список”: baseline разрастается, system/API ограничивают ответ.
+              Prompt просит 10 причин; system/API ограничивают результат до 5 без изменения user prompt.
             </span>
           </button>
 
@@ -87,8 +87,8 @@
             <h2>API control</h2>
             <div class="api-grid">
               <label class="slider">
-                <span class="slider-title">max_tokens <strong id="max-tokens-value">120</strong></span>
-                <input id="max-tokens" name="max_tokens" type="range" min="20" max="512" step="10" value="120">
+                <span class="slider-title">max_tokens <strong id="max-tokens-value">1600</strong></span>
+                <input id="max-tokens" name="max_tokens" type="range" min="20" max="2400" step="10" value="1600">
               </label>
 
               <label class="field compact-field">
@@ -97,10 +97,10 @@
                   id="stop"
                   name="stop"
                   type="text"
-                  value="\n6., 6."
-                  placeholder="\n6., 6."
+                  value="\n6., **6., 6., &quot;6&quot;"
+                  placeholder="\n6., **6., 6., &quot;6&quot;"
                 >
-                <small>Stop sequence не дает ответу перейти к 6-му пункту.</small>
+                <small>User prompt просит 10 пунктов; stop обрывает ответ перед 6-м.</small>
               </label>
 
               <label class="field compact-field response-format-field">
