@@ -4,7 +4,7 @@ globs:
 alwaysApply: true
 ---
 
-Use `AGENTS.md` as the source of truth for project-wide agent instructions.
+`AGENTS.md` = source of truth for project-wide agent instructions.
 
 Documentation map:
 
@@ -13,13 +13,13 @@ Documentation map:
 - `docs/specs/assignment-2-response-control.md` - response-control assignment spec.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
 
-When editing `llm_demo`, read the assignment 2 spec and agent notes first if the change touches response-control behavior.
+When editing `llm_demo`, read assignment 2 spec + agent notes first if response-control behavior changes.
 
-Cursor-specific rule: this file is always attached but intentionally short. Do not duplicate long specs or debug notes here; update the canonical docs instead.
+Cursor rule always attached, intentionally short. Do not duplicate long specs/debug notes here; update canonical docs.
 
 Key guardrails:
 
-- Keep LLM calls as explicit REST via `httpx.post`.
+- Keep LLM calls explicit REST via `httpx.post`.
 - Keep exactly three modes: `none`, `api`, `system`.
 - Keep the same `user` prompt in every mode.
 - Do not auto-fallback on OpenRouter `response_format` errors.

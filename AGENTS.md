@@ -2,7 +2,7 @@
 
 ## Project Map
 
-This repository contains an educational AI Advent demo. The app in `llm_demo/` serves a vanilla web UI from Flask and calls OpenRouter through explicit REST with `httpx.post`.
+Educational AI Advent demo. `llm_demo/`: Flask serves vanilla web UI; OpenRouter call via explicit REST `httpx.post`.
 
 Canonical documentation:
 
@@ -11,17 +11,17 @@ Canonical documentation:
 - `docs/specs/assignment-2-response-control.md` - response-control assignment spec.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
 
-Tool-specific files must stay thin. Do not duplicate long specs inside `.cursor/rules`, `.agents`, or other assistant-specific locations; link to the docs above.
+Tool-specific files stay thin. Do not duplicate long specs in `.cursor/rules`, `.agents`, or assistant-specific dirs; link docs above.
 
 ## Caveman Token Mode
 
-Project-local caveman plugin is installed under `.agents/`. Default to `/caveman ultra` for terse agent output and answer in Russian for Russian-language prompts. Use sibling modes/helpers (`/caveman-commit`, `/caveman-review`, `/caveman-compress`, `/caveman-stats`, `cavecrew-*`) when relevant.
+Project-local caveman plugin: `.agents/`. Default `/caveman ultra`; Russian prompts -> Russian terse output. Use helpers (`/caveman-commit`, `/caveman-review`, `/caveman-compress`, `/caveman-stats`, `cavecrew-*`) when relevant.
 
-Keep technical terms, code, paths, commands, and error strings exact. Drop caveman compression for security warnings, irreversible actions, confused users, or any case where terse phrasing risks ambiguity.
+Keep technical terms, code, paths, commands, error strings exact. Drop compression for security warnings, irreversible actions, confused users, or ambiguity risk.
 
 ## LLM Demo Rules
 
-When editing `llm_demo/`, preserve these invariants:
+When editing `llm_demo/`, preserve:
 
 - Keep the LLM request as explicit REST through `httpx.post`; do not introduce OpenAI SDK, LangChain, Streamlit, or Gradio.
 - Keep exactly three control modes: `none`, `api`, `system`.
@@ -31,7 +31,7 @@ When editing `llm_demo/`, preserve these invariants:
 - Do not auto-fallback when OpenRouter returns HTTP 400 for `response_format`; surface the error in the demo.
 - Keep `OPENROUTER_API_KEY` backend-only.
 
-Before changing response-control behavior, read `docs/specs/assignment-2-response-control.md` and `docs/agent-notes/llm-demo-assignment-2.md`.
+Before response-control changes, read `docs/specs/assignment-2-response-control.md` and `docs/agent-notes/llm-demo-assignment-2.md`.
 
 ## Commands
 
@@ -54,4 +54,4 @@ cd llm_demo
 HOST=127.0.0.1 PORT=5050 ./.venv/bin/python server.py
 ```
 
-Prefer no-network payload checks before real OpenRouter calls. Only run real 3-mode OpenRouter comparisons when the user permits spending the key.
+Prefer no-network payload checks before real OpenRouter calls. Run real 3-mode OpenRouter comparisons only with user permission to spend key.
