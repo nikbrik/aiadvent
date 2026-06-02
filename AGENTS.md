@@ -10,6 +10,7 @@ Canonical documentation:
 - `docs/specs/assignment-1-rest-web-demo.md` - original REST + web + Android demo spec.
 - `docs/specs/assignment-2-response-control.md` - response-control assignment spec.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
+- `docs/agent-notes/ast-index-install-playbook.md` - detailed ast-index installation playbook for GitHub/local/same-machine installs.
 
 Tool-specific files stay thin. Do not duplicate long specs in `.cursor/rules`, `.agents`, or assistant-specific dirs; link docs above.
 
@@ -25,7 +26,7 @@ Project-local ast-index plugin/skill: `.agents/plugins/ast-index` and `.agents/s
 
 Use `ast-index`/MCP first for structural code navigation: symbols, classes, usages, callers, refs, outlines, module/dependency questions, and project maps. Use `rg` for raw text, regex, comments, exact string literals, or when ast-index returns no useful hits.
 
-Run `AST_INDEX_DB_PATH=/Users/nikita/code/aiadvent/.ast-index/index.db ast-index update` after pulling/rebasing or when results look stale. Use `rebuild` with the same env for first setup or a broken index.
+Index is local and gitignored. After pull/rebase or noticeable code changes, run `AST_INDEX_DB_PATH=/Users/nikita/code/aiadvent/.ast-index/index.db ast-index update`. Use `rebuild` with the same env for first setup or a broken index.
 
 ## LLM Demo Rules
 

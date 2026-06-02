@@ -21,4 +21,11 @@ ast-index stats
 ast-index update
 ```
 
+Index is local and gitignored. After pull/rebase or noticeable code changes,
+run:
+
+```bash
+AST_INDEX_DB_PATH=/Users/nikita/code/aiadvent/.ast-index/index.db ast-index update
+```
+
 Run `ast-index rebuild` only for first setup or a broken index.

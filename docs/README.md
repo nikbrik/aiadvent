@@ -8,6 +8,7 @@ This directory is the source of truth for project documentation.
 - `specs/assignment-2-response-control.md` - response-control assignment requirements.
 - `agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider debugging notes, and guardrails for future Codex/Cursor sessions.
 - `agent-notes/caveman-install-playbook.md` - detailed LLM playbook for installing JuliusBrussee/caveman into other projects without accidentally invoking Claude hooks.
+- `agent-notes/ast-index-install-playbook.md` - detailed playbook for installing defendend/Claude-ast-index-search from GitHub, a local checkout, or another project on this machine.
 
 ## Agent Entrypoints
 

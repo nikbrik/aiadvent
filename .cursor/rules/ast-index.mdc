@@ -9,8 +9,14 @@ project maps.
 
 Project MCP config sets `AST_INDEX_DB_PATH` to `${workspaceFolder}/.ast-index/index.db`.
 Before the first structural query, run `ast-index stats`. If there is no usable
-index, run `ast-index rebuild` from the project root. After pulling or rebasing,
-run `ast-index update`.
+index, run `ast-index rebuild` from the project root.
+
+Index is local and gitignored. After pull/rebase or noticeable code changes,
+run:
+
+```bash
+AST_INDEX_DB_PATH=/Users/nikita/code/aiadvent/.ast-index/index.db ast-index update
+```
 
 Use `rg` instead for raw text, regex, comments, exact string literals, or when
 `ast-index` returns no useful hits.
