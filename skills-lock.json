@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "ast-index": {
+      "source": "defendend/Claude-ast-index-search",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/ast-index/SKILL.md",
+      "computedHash": "27b8852e74ca367adfaab4ceca784ebb46aec511d6435f5a47f4cf5ffaf3af7b"
+    },
     "cavecrew": {
       "source": "JuliusBrussee/caveman",
       "sourceType": "github",

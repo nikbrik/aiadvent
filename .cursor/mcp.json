@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ast-index": {
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/ast-index-mcp",
+      "args": [],
+      "env": {
+        "AST_INDEX_ROOT": "${workspaceFolder}",
+        "AST_INDEX_BIN": "/opt/homebrew/bin/ast-index",
+        "AST_INDEX_DB_PATH": "${workspaceFolder}/.ast-index/index.db"
+      }
+    }
+  }
+}

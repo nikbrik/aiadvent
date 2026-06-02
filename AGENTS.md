@@ -19,6 +19,14 @@ Project-local caveman plugin: `.agents/`. Default `/caveman ultra`; Russian prom
 
 Keep technical terms, code, paths, commands, error strings exact. Drop compression for security warnings, irreversible actions, confused users, or ambiguity risk.
 
+## ast-index Search
+
+Project-local ast-index plugin/skill: `.agents/plugins/ast-index` and `.agents/skills/ast-index`. MCP configs live in `.mcp.json`, `.cursor/mcp.json`, and `.codex/config.toml`. The local DB path is `.ast-index/index.db` via `AST_INDEX_DB_PATH`; `.ast-index/` is gitignored.
+
+Use `ast-index`/MCP first for structural code navigation: symbols, classes, usages, callers, refs, outlines, module/dependency questions, and project maps. Use `rg` for raw text, regex, comments, exact string literals, or when ast-index returns no useful hits.
+
+Run `AST_INDEX_DB_PATH=/Users/nikita/code/aiadvent/.ast-index/index.db ast-index update` after pulling/rebasing or when results look stale. Use `rebuild` with the same env for first setup or a broken index.
+
 ## LLM Demo Rules
 
 When editing `llm_demo/`, preserve:

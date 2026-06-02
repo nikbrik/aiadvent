@@ -1,0 +1,28 @@
+---
+description: Use ast-index for structural code search before broad text search.
+alwaysApply: true
+---
+
+Use `ast-index` first for structural code navigation: files, symbols, classes,
+usages, callers, implementations, refs, outlines, modules, dependencies, and
+project maps.
+
+Project MCP config sets `AST_INDEX_DB_PATH` to `${workspaceFolder}/.ast-index/index.db`.
+Before the first structural query, run `ast-index stats`. If there is no usable
+index, run `ast-index rebuild` from the project root. After pulling or rebasing,
+run `ast-index update`.
+
+Use `rg` instead for raw text, regex, comments, exact string literals, or when
+`ast-index` returns no useful hits.
+
+Useful commands:
+
+```bash
+ast-index search "Query"
+ast-index file "FileName"
+ast-index symbol "SymbolName"
+ast-index class "ClassName"
+ast-index usages "SymbolName"
+ast-index refs "SymbolName"
+ast-index outline "path/to/file.py"
+```
