@@ -1,10 +1,12 @@
 # LLM REST Web Demo
 
-Учебное демо для AI Advent: браузер отправляет prompt и параметры генерации в Python backend, backend делает явный REST POST через `httpx` к OpenRouter.
+Учебное демо для AI Advent: браузер отправляет задачу и параметры генерации в Python backend, backend делает явный REST POST через `httpx` к OpenRouter.
+
+Текущий снапшот реализует День 3: сравнение разных способов рассуждения на одной аналитической задаче.
 
 ## Что внутри
 
-- `server.py` - Flask routes `/` и `/api/chat`.
+- `server.py` - Flask routes `/`, `/api/chat` и `/api/compare`.
 - `llm_client.py` - низкоуровневый REST-запрос к OpenRouter через `httpx.post`.
 - `static/index.html` - vanilla HTML/JS UI.
 - `static/style.css` - адаптивные стили для desktop и Android Chrome.
@@ -13,7 +15,24 @@
 
 - `../docs/specs/assignment-1-rest-web-demo.md`
 - `../docs/specs/assignment-2-response-control.md`
+- `../docs/specs/assignment-3-reasoning-modes.md`
 - `../docs/agent-notes/llm-demo-assignment-2.md`
+- `../docs/agent-notes/llm-demo-assignment-3.md`
+
+## День 3
+
+UI сравнивает четыре режима:
+
+| Режим | Что отправляется |
+| --- | --- |
+| `direct` | Только user task, без дополнительных инструкций |
+| `step` | `system` injection: `Решай пошагово` |
+| `prompt_chain` | Два API-вызова: generated prompt, затем решение |
+| `experts` | `system` injection: аналитик, инженер, критик |
+
+Для дефолтной задачи эталон: `44 дня`, критический путь `A → B → C → E → F → J → L → N`. Backend показывает score `0/2`, `1/2` или `2/2`.
+
+UI отдельно показывает ход рассуждения и итог. Если OpenRouter вернул native reasoning, используется он; иначе показывается видимый расчет из обычного ответа модели.
 
 ## Запуск
 

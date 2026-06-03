@@ -11,15 +11,17 @@ Documentation map:
 - `docs/README.md` - documentation index and update rules.
 - `docs/specs/assignment-1-rest-web-demo.md` - REST/web/Android demo spec.
 - `docs/specs/assignment-2-response-control.md` - response-control assignment spec.
+- `docs/specs/assignment-3-reasoning-modes.md` - reasoning-mode assignment spec.
+- `docs/specs/submission-snapshot-policy.md` - daily snapshot submission policy.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
+- `docs/agent-notes/llm-demo-assignment-3.md` - Day 3 implementation notes.
 
-When editing `llm_demo`, read assignment 2 spec + agent notes first if response-control behavior changes.
+Daily assignments are submitted as repository snapshots. Current-day requirements may replace or break previous-day UI/behavior. Do not preserve old flows by default; follow `docs/specs/submission-snapshot-policy.md`.
 
 Cursor rule always attached, intentionally short. Do not duplicate long specs/debug notes here; update canonical docs.
 
 Key guardrails:
 
 - Keep LLM calls explicit REST via `httpx.post`.
-- Keep exactly three modes: `none`, `api`, `system`.
-- Keep the same `user` prompt in every mode.
-- Do not auto-fallback on OpenRouter `response_format` errors.
+- Keep `OPENROUTER_API_KEY` backend-only.
+- Prefer no-network payload checks before real OpenRouter calls.

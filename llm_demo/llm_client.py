@@ -28,6 +28,8 @@ def chat_completion(
     stop=None,
     response_format=None,
     provider=None,
+    include_reasoning=False,
+    reasoning=None,
 ):
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
@@ -55,6 +57,12 @@ def chat_completion(
 
     if provider:
         body["provider"] = provider
+
+    if include_reasoning:
+        body["include_reasoning"] = True
+
+    if reasoning:
+        body["reasoning"] = reasoning
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -109,11 +117,15 @@ def chat_completion(
     try:
         data = response_data if isinstance(response_data, dict) else response.json()
         choice = data["choices"][0]
+        message = choice["message"]
         usage = data.get("usage") or {}
+        completion_details = usage.get("completion_tokens_details") or {}
         return {
-            "content": choice["message"]["content"],
+            "content": message.get("content"),
+            "reasoning": message.get("reasoning") or message.get("reasoning_content"),
             "finish_reason": choice.get("finish_reason"),
             "completion_tokens": usage.get("completion_tokens"),
+            "reasoning_tokens": usage.get("reasoning_tokens") or completion_details.get("reasoning_tokens"),
         }
     except (KeyError, IndexError, TypeError, ValueError):
         raise OpenRouterError("OpenRouter response did not contain choices[0].message.content", 502)

@@ -9,7 +9,10 @@ Canonical documentation:
 - `docs/README.md` - documentation index and ownership rules.
 - `docs/specs/assignment-1-rest-web-demo.md` - original REST + web + Android demo spec.
 - `docs/specs/assignment-2-response-control.md` - response-control assignment spec.
+- `docs/specs/assignment-3-reasoning-modes.md` - reasoning-mode assignment spec.
+- `docs/specs/submission-snapshot-policy.md` - snapshot submission policy.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
+- `docs/agent-notes/llm-demo-assignment-3.md` - Day 3 implementation decisions and checks.
 
 Tool-specific files stay thin. Do not duplicate long specs in `.cursor/rules`, `.agents`, or assistant-specific dirs; link docs above.
 
@@ -27,19 +30,26 @@ Use `ast-index`/MCP first for structural code navigation: symbols, classes, usag
 
 Index is local and gitignored. After pull/rebase or noticeable code changes, run `AST_INDEX_DB_PATH=/Users/nikita/code/aiadvent/.ast-index/index.db ast-index update`. Use `rebuild` with the same env for first setup or a broken index.
 
+## Submission Model
+
+Assignments are submitted as repository snapshots. Current-day assignment requirements may replace or break previous-day UI/behavior. Do not add compatibility layers only to preserve old days unless the user asks.
+
+When older assignment docs conflict with the active task, follow the active task and `docs/specs/submission-snapshot-policy.md`.
+
 ## LLM Demo Rules
 
 When editing `llm_demo/`, preserve:
 
 - Keep the LLM request as explicit REST through `httpx.post`; do not introduce OpenAI SDK, LangChain, Streamlit, or Gradio.
-- Keep exactly three control modes: `none`, `api`, `system`.
-- Keep the same `user` prompt in every mode. Add control only through API fields or `system` messages.
-- Do not split API control into additional UI modes.
-- Do not mix API and system controls in one mode.
-- Do not auto-fallback when OpenRouter returns HTTP 400 for `response_format`; surface the error in the demo.
 - Keep `OPENROUTER_API_KEY` backend-only.
+- Prefer no-network payload checks before real OpenRouter calls.
 
-Before response-control changes, read `docs/specs/assignment-2-response-control.md` and `docs/agent-notes/llm-demo-assignment-2.md`.
+Assignment-specific rules apply only when actively working on that assignment:
+
+- Day 2 response-control mode rules live in `docs/specs/assignment-2-response-control.md` and `docs/agent-notes/llm-demo-assignment-2.md`.
+- Day 3 reasoning-mode rules live in `docs/specs/assignment-3-reasoning-modes.md` and `docs/agent-notes/llm-demo-assignment-3.md`.
+
+Before changing assignment-specific behavior, read the matching spec and agent notes.
 
 ## Commands
 
@@ -62,4 +72,4 @@ cd llm_demo
 HOST=127.0.0.1 PORT=5050 ./.venv/bin/python server.py
 ```
 
-Prefer no-network payload checks before real OpenRouter calls. Run real 3-mode OpenRouter comparisons only with user permission to spend key.
+Run real OpenRouter comparisons only with user permission to spend key.

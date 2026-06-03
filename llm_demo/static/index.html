@@ -3,72 +3,80 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>LLM REST demo</title>
+    <title>LLM reasoning demo</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · REST без SDK</p>
-        <h1>LLM через OpenRouter</h1>
+        <p class="eyebrow">AI Advent · День 3</p>
+        <h1>Разные способы рассуждения</h1>
         <p class="lead">
-          Введите промпт, настройте параметры генерации и отправьте явный REST-запрос через Python backend.
+          Более сложная PERT/CPM задача отправляется в OpenRouter четырьмя способами:
+          напрямую, через step-by-step system prompt, через сгенерированный prompt
+          и через группу экспертов.
         </p>
       </section>
 
-      <section class="card">
+      <section class="panel">
         <form id="chat-form">
-          <label class="field">
-            <span>Промпт</span>
-            <textarea
-              id="prompt"
-              name="prompt"
-              rows="7"
-              placeholder="Например: объясни top_p простыми словами"
-              required
-            ></textarea>
-          </label>
+          <div class="top-row">
+            <label class="field">
+              <span>Задача</span>
+              <textarea id="prompt" name="prompt" rows="12" required>PERT/CPM задача: строительный проект из 14 активностей.
 
-          <label class="field model-field">
-            <span>Модель</span>
-            <select id="model" name="model" disabled aria-disabled="true">
-              <option value="deepseek/deepseek-v4-flash" selected>deepseek 4 flash</option>
-            </select>
-            <small>Модель зафиксирована для демо и недоступна для выбора.</small>
-          </label>
+Даны активности, длительности в днях и непосредственные предшественники:
 
-          <button
-            id="demo-prompt"
-            class="preset-prompt"
-            type="button"
-            data-prompt="Придумай 10 необычных причин, почему робот-бариста внезапно начал писать посетителям философские предсказания на стаканчиках. Для каждой причины добавь атмосферную деталь."
-          >
-            <span class="preset-title">Контрастный демо-промпт</span>
-            <span class="preset-text">
-              Prompt просит 10 причин; system/API ограничивают результат до 5 без изменения user prompt.
-            </span>
-          </button>
+A Excavation — 2 — нет
+B Foundation — 4 — A
+C Walls — 10 — B
+D Roof — 6 — C
+E Exterior enclosure — 4 — C
+F Interior enclosure — 5 — E
+G Exterior walls — 7 — D
+H Exterior painting — 9 — E, G
+I Electrical — 7 — C
+J Partitions — 8 — F, I
+K Flooring — 4 — J
+L Interior painting — 5 — J
+M Exterior finishing — 2 — H
+N Interior finishing — 6 — K, L
 
-          <fieldset class="mode-group">
-            <legend>Режим контроля</legend>
-            <label class="mode-option">
-              <input type="radio" name="control_mode" value="none" checked>
-              <span>Без ограничений</span>
+Найдите минимальную длительность проекта и критический путь.</textarea>
             </label>
-            <label class="mode-option">
-              <input type="radio" name="control_mode" value="api">
-              <span>Контроль через API</span>
+
+            <aside class="reference">
+              <span class="reference-title">Эталон</span>
+              <p>Минимальная длительность: <strong>44 дня</strong>.</p>
+              <p>Критический путь: <strong>A → B → C → E → F → J → L → N</strong>.</p>
+              <p class="muted">Источник: <a href="https://cpm-pert.com/example-pert-cpm" target="_blank" rel="noreferrer">PERT/CPM Online</a></p>
+              <p class="muted">Авто-проверка ищет число 44 и путь ABCEFJLN в ответе.</p>
+            </aside>
+          </div>
+
+          <div class="config-grid">
+            <label class="field">
+              <span>Способ</span>
+              <select id="reasoning-mode" name="reasoning_mode">
+                <option value="direct">Прямой ответ без инструкций</option>
+                <option value="step">System prompt: решай пошагово</option>
+                <option value="prompt_chain">System prompt: сначала prompt, потом решение</option>
+                <option value="experts">System prompt: аналитик + инженер + критик</option>
+              </select>
             </label>
-            <label class="mode-option">
-              <input type="radio" name="control_mode" value="system">
-              <span>Контроль через system</span>
+
+            <label class="field model-field">
+              <span>Модель</span>
+              <select id="model" name="model" disabled aria-disabled="true">
+                <option value="deepseek/deepseek-v4-flash" selected>deepseek/deepseek-v4-flash</option>
+              </select>
             </label>
-          </fieldset>
+          </div>
 
           <div class="controls">
             <label class="slider">
-              <span class="slider-title">temperature <strong id="temperature-value">0.7</strong></span>
-              <input id="temperature" name="temperature" type="range" min="0" max="2" step="0.1" value="0.7">
+              <span class="slider-title">temperature <strong id="temperature-value">0.4</strong></span>
+              <input id="temperature" name="temperature" type="range" min="0" max="2" step="0.1" value="0.4">
             </label>
 
             <label class="slider">
@@ -79,69 +87,46 @@
             <label class="slider">
               <span class="slider-title">top_k <strong id="top-k-value">40</strong></span>
               <input id="top-k" name="top_k" type="range" min="0" max="100" step="1" value="40">
-              <small>0 = не передавать параметр в API</small>
             </label>
           </div>
 
-          <section id="api-control-panel" class="control-panel" hidden>
-            <h2>API control</h2>
-            <div class="api-grid">
-              <label class="slider">
-                <span class="slider-title">max_tokens <strong id="max-tokens-value">1600</strong></span>
-                <input id="max-tokens" name="max_tokens" type="range" min="20" max="2400" step="10" value="1600">
-              </label>
-
-              <label class="field compact-field">
-                <span>stop</span>
-                <input
-                  id="stop"
-                  name="stop"
-                  type="text"
-                  value="\n6., **6., 6., &quot;6&quot;"
-                  placeholder="\n6., **6., 6., &quot;6&quot;"
-                >
-                <small>User prompt просит 10 пунктов; stop обрывает ответ перед 6-м.</small>
-              </label>
-
-              <label class="field compact-field response-format-field">
-                <span>response_format</span>
-                <input id="response-format" name="response_format" type="text" value='{"type":"json_object"}' readonly>
-                <small>Формат ответа задается API-параметром, user prompt не меняется.</small>
-              </label>
-            </div>
-          </section>
-
-          <section id="system-control-panel" class="control-panel" hidden>
-            <label class="field">
-              <span>System message</span>
-              <textarea id="system-message" name="system_message" rows="7">Ты отвечаешь строго по правилам:
-1. Формат: нумерованный список из ровно 5 пунктов (1. … 2. … и т.д.).
-2. Длина: каждый пункт — не более 15 слов.
-3. Завершение: после пункта 5 сразу остановись. Не добавляй вступление, заключение и текст после списка.</textarea>
-            </label>
-          </section>
+          <div class="method-note" id="method-note"></div>
 
           <div class="form-actions">
-            <button id="submit-button" class="submit-button" type="submit">Отправить выбранный режим</button>
-            <button id="compare-button" class="secondary-button" type="button">Сравнить 3 режима</button>
+            <button id="submit-button" class="submit-button" type="submit">Запустить выбранный способ</button>
+            <button id="compare-button" class="secondary-button" type="button">Сравнить 4 способа</button>
           </div>
         </form>
       </section>
 
-      <section class="card response-card">
+      <section class="panel response-card">
         <div class="response-head">
           <h2>Ответ модели</h2>
           <span id="status" class="status">Готово</span>
         </div>
-        <pre id="response">Ответ появится здесь.</pre>
-        <div id="response-meta" class="response-meta">finish_reason и completion_tokens появятся после ответа.</div>
+        <div class="response-sections">
+          <article class="answer-block">
+            <h3>Ход рассуждения</h3>
+            <pre id="visible-reasoning">Ход рассуждения появится здесь.</pre>
+          </article>
+          <article class="answer-block">
+            <h3>Итог</h3>
+            <pre id="response">Итог появится здесь.</pre>
+          </article>
+        </div>
+        <div id="generated-prompt-card" class="generated-prompt" hidden>
+          <h3>Сгенерированный prompt</h3>
+          <pre id="generated-prompt"></pre>
+        </div>
+        <div id="response-meta" class="response-meta">Метаданные появятся после ответа.</div>
       </section>
 
-      <section id="compare-card" class="card compare-card" hidden>
+      <section id="compare-card" class="panel compare-card" hidden>
         <div class="response-head">
-          <h2>Сравнение трех режимов</h2>
+          <h2>Сравнение</h2>
           <span id="compare-status" class="status">Готово</span>
         </div>
+        <div id="compare-summary" class="compare-summary"></div>
         <div id="compare-grid" class="compare-grid"></div>
       </section>
     </main>
@@ -150,58 +135,99 @@
       const form = document.querySelector("#chat-form");
       const promptInput = document.querySelector("#prompt");
       const modelInput = document.querySelector("#model");
-      const demoPromptButton = document.querySelector("#demo-prompt");
+      const reasoningMode = document.querySelector("#reasoning-mode");
+      const methodNote = document.querySelector("#method-note");
       const responseBox = document.querySelector("#response");
+      const visibleReasoningBox = document.querySelector("#visible-reasoning");
+      const generatedPromptCard = document.querySelector("#generated-prompt-card");
+      const generatedPromptBox = document.querySelector("#generated-prompt");
       const responseMeta = document.querySelector("#response-meta");
       const statusBox = document.querySelector("#status");
       const submitButton = document.querySelector("#submit-button");
       const compareButton = document.querySelector("#compare-button");
       const compareCard = document.querySelector("#compare-card");
       const compareGrid = document.querySelector("#compare-grid");
+      const compareSummary = document.querySelector("#compare-summary");
       const compareStatus = document.querySelector("#compare-status");
-      const controlModeInputs = document.querySelectorAll("input[name='control_mode']");
-      const apiControlPanel = document.querySelector("#api-control-panel");
-      const systemControlPanel = document.querySelector("#system-control-panel");
 
       const temperature = document.querySelector("#temperature");
       const topP = document.querySelector("#top-p");
       const topK = document.querySelector("#top-k");
-      const maxTokens = document.querySelector("#max-tokens");
-      const stopSequences = document.querySelector("#stop");
-      const systemMessage = document.querySelector("#system-message");
 
       const temperatureValue = document.querySelector("#temperature-value");
       const topPValue = document.querySelector("#top-p-value");
       const topKValue = document.querySelector("#top-k-value");
-      const maxTokensValue = document.querySelector("#max-tokens-value");
-      const fixedResponseFormat = { type: "json_object" };
+
+      const methodNotes = {
+        direct: "Baseline: только user prompt. Отдельный ход рассуждения может не появиться.",
+        step: "System injection: просим forward pass, slack check и итог отдельными блоками.",
+        prompt_chain: "Два API-вызова: сначала generated prompt, затем решение с видимым расчетом.",
+        experts: "System injection: аналитик, инженер и критик дают разные проверки перед итогом.",
+      };
 
       function syncSliders() {
         temperatureValue.textContent = Number(temperature.value).toFixed(1);
         topPValue.textContent = Number(topP.value).toFixed(2).replace(/0$/, "");
         topKValue.textContent = topK.value;
-        maxTokensValue.textContent = maxTokens.value;
       }
 
-      [temperature, topP, topK, maxTokens].forEach((slider) => {
+      function syncMethodNote() {
+        methodNote.textContent = methodNotes[reasoningMode.value];
+      }
+
+      [temperature, topP, topK].forEach((slider) => {
         slider.addEventListener("input", syncSliders);
       });
+      reasoningMode.addEventListener("change", syncMethodNote);
 
-      function selectedControlMode() {
-        return document.querySelector("input[name='control_mode']:checked").value;
+      function buildPayload(mode) {
+        return {
+          prompt: promptInput.value,
+          model: modelInput.value,
+          reasoning_mode: mode,
+          temperature: Number(temperature.value),
+          top_p: Number(topP.value),
+          top_k: Number(topK.value),
+          include_reasoning: true,
+        };
       }
 
-      function syncControlPanels() {
-        const mode = selectedControlMode();
-        const isApi = mode === "api";
-        const isSystem = mode === "system";
+      function setBusy(isBusy) {
+        submitButton.disabled = isBusy;
+        compareButton.disabled = isBusy;
+        reasoningMode.disabled = isBusy;
+      }
 
-        apiControlPanel.hidden = !isApi;
-        systemControlPanel.hidden = !isSystem;
-        apiControlPanel.querySelectorAll("input").forEach((input) => {
-          input.disabled = !isApi;
-        });
-        systemMessage.disabled = !isSystem;
+      function responseContent(data) {
+        if (data.content !== null && data.content !== undefined && data.content !== "") {
+          return data.content;
+        }
+
+        return "content=null: OpenRouter/model не вернул видимый текст.";
+      }
+
+      function finalContent(data) {
+        if (data.final_answer !== null && data.final_answer !== undefined && data.final_answer !== "") {
+          return data.final_answer;
+        }
+
+        return responseContent(data);
+      }
+
+      function visibleReasoningContent(data) {
+        if (data.visible_reasoning !== null && data.visible_reasoning !== undefined && data.visible_reasoning !== "") {
+          return data.visible_reasoning;
+        }
+
+        return "Native reasoning не вернулся, а видимый ход рассуждения не был выделен.";
+      }
+
+      function evaluationText(evaluation) {
+        if (!evaluation) {
+          return "оценка недоступна";
+        }
+
+        return `${evaluation.score}/${evaluation.max_score}: ${evaluation.notes.join("; ")}`;
       }
 
       function renderMetadata(data) {
@@ -212,99 +238,111 @@
         }
 
         if (data.completion_tokens !== null && data.completion_tokens !== undefined) {
-          meta.push(`completion_tokens: ${data.completion_tokens}`);
+          meta.push(`answer_tokens: ${data.completion_tokens}`);
         }
 
-        responseMeta.textContent = meta.length ? meta.join(" · ") : "Метаданные в ответе OpenRouter отсутствуют.";
+        if (data.reasoning_tokens !== null && data.reasoning_tokens !== undefined) {
+          meta.push(`reasoning_tokens: ${data.reasoning_tokens}`);
+        }
+
+        if (data.reasoning_source) {
+          meta.push(`reasoning_source: ${data.reasoning_source}`);
+        }
+
+        if (data.prompt_completion_tokens !== null && data.prompt_completion_tokens !== undefined) {
+          meta.push(`prompt_tokens: ${data.prompt_completion_tokens}`);
+        }
+
+        if (data.completion_tokens_total !== null && data.completion_tokens_total !== undefined) {
+          meta.push(`total_tokens: ${data.completion_tokens_total}`);
+        }
+
+        meta.push(`score: ${evaluationText(data.evaluation)}`);
+        responseMeta.textContent = meta.join(" · ");
       }
 
-      function responseContent(data) {
-        if (data.content !== null && data.content !== undefined && data.content !== "") {
-          return data.content;
+      function renderGeneratedPrompt(data) {
+        if (data.generated_prompt) {
+          generatedPromptBox.textContent = data.generated_prompt;
+          generatedPromptCard.hidden = false;
+          return;
         }
 
-        return "content=null: OpenRouter/model не вернул видимый текст. Это частый edge case для response_format/json_object на отдельных провайдерах.";
-      }
-
-      function buildPayload(controlMode, includeAllControls = false) {
-        const payload = {
-          prompt: promptInput.value,
-          model: modelInput.value,
-          control_mode: controlMode,
-          temperature: Number(temperature.value),
-          top_p: Number(topP.value),
-          top_k: Number(topK.value),
-        };
-
-        if (controlMode === "api" || includeAllControls) {
-          payload.max_tokens = Number(maxTokens.value);
-          payload.stop = stopSequences.value;
-          payload.response_format = fixedResponseFormat;
-        }
-
-        if (controlMode === "system" || includeAllControls) {
-          payload.system_message = systemMessage.value;
-        }
-
-        return payload;
-      }
-
-      function setBusy(isBusy) {
-        submitButton.disabled = isBusy;
-        compareButton.disabled = isBusy;
-        demoPromptButton.disabled = isBusy;
-      }
-
-      function controlSummary(mode) {
-        if (mode === "system") {
-          return "system message: формат + длина + завершение";
-        }
-
-        if (mode === "api") {
-          return `API: формат=response_format, длина=max_tokens=${maxTokens.value}, завершение=stop, provider=Novita`;
-        }
-
-        return "только user prompt и sampling";
+        generatedPromptBox.textContent = "";
+        generatedPromptCard.hidden = true;
       }
 
       function createCompareItem(result) {
         const item = document.createElement("article");
-        item.className = `compare-item mode-${result.control_mode || "unknown"}`;
+        item.className = `compare-item mode-${result.reasoning_mode || "unknown"}`;
 
         const head = document.createElement("div");
         head.className = "compare-item-head";
 
         const title = document.createElement("h3");
-        title.textContent = result.label || result.control_mode || "Режим";
+        title.textContent = result.label || result.reasoning_mode || "Способ";
 
         const badge = document.createElement("span");
         badge.className = result.error ? "compare-badge error" : "compare-badge";
-        badge.textContent = result.error ? `HTTP ${result.status || "error"}` : result.finish_reason || "ok";
+        badge.textContent = result.error ? `HTTP ${result.status || "error"}` : evaluationText(result.evaluation);
 
         head.append(title, badge);
 
-        const controls = document.createElement("div");
-        controls.className = "compare-controls";
-        controls.textContent = controlSummary(result.control_mode);
+        const sections = document.createElement("div");
+        sections.className = "compare-sections";
 
+        const reasoningBlock = document.createElement("section");
+        reasoningBlock.className = "mini-block";
+        const reasoningTitle = document.createElement("h4");
+        reasoningTitle.textContent = "Ход";
+        const reasoning = document.createElement("pre");
+        reasoning.className = result.error ? "compare-output compare-output-error" : "compare-output compare-reasoning";
+        reasoning.textContent = result.error || visibleReasoningContent(result);
+        reasoningBlock.append(reasoningTitle, reasoning);
+
+        const finalBlock = document.createElement("section");
+        finalBlock.className = "mini-block";
+        const finalTitle = document.createElement("h4");
+        finalTitle.textContent = "Итог";
         const content = document.createElement("pre");
         const hasNullContent = !result.error && (result.content === null || result.content === undefined || result.content === "");
-        content.className = result.error || hasNullContent ? "compare-output compare-output-error" : "compare-output";
-        content.textContent = result.error || responseContent(result);
+        content.className = result.error || hasNullContent ? "compare-output compare-output-error" : "compare-output compare-final";
+        content.textContent = result.error || finalContent(result);
+        finalBlock.append(finalTitle, content);
+        sections.append(reasoningBlock, finalBlock);
 
         const meta = document.createElement("div");
         meta.className = "response-meta";
-        const charCount = result.content ? result.content.length : 0;
         const metaItems = [];
-        if (result.completion_tokens !== null && result.completion_tokens !== undefined) {
-          metaItems.push(`${result.completion_tokens} completion tokens`);
+        if (result.completion_tokens_total !== null && result.completion_tokens_total !== undefined) {
+          metaItems.push(`${result.completion_tokens_total} total tokens`);
+        } else if (result.completion_tokens !== null && result.completion_tokens !== undefined) {
+          metaItems.push(`${result.completion_tokens} answer tokens`);
         }
-        if (charCount) {
-          metaItems.push(`${charCount} символов`);
+        if (result.character_count) {
+          metaItems.push(`${result.character_count} символов`);
+        }
+        if (result.generated_prompt) {
+          metaItems.push("есть generated prompt");
+        }
+        if (result.reasoning_source) {
+          metaItems.push(result.reasoning_source);
         }
         meta.textContent = metaItems.length ? metaItems.join(" · ") : "Метаданные отсутствуют.";
 
-        item.append(head, controls, content, meta);
+        if (result.generated_prompt) {
+          const promptDetails = document.createElement("details");
+          promptDetails.className = "prompt-details";
+          const summary = document.createElement("summary");
+          summary.textContent = "Показать generated prompt";
+          const generated = document.createElement("pre");
+          generated.textContent = result.generated_prompt;
+          promptDetails.append(summary, generated);
+          item.append(head, sections, promptDetails, meta);
+        } else {
+          item.append(head, sections, meta);
+        }
+
         return item;
       }
 
@@ -312,26 +350,18 @@
         compareGrid.replaceChildren(...results.map(createCompareItem));
       }
 
-      controlModeInputs.forEach((input) => {
-        input.addEventListener("change", syncControlPanels);
-      });
-
-      demoPromptButton.addEventListener("click", () => {
-        promptInput.value = demoPromptButton.dataset.prompt;
-        promptInput.focus();
-      });
-
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
 
-        const controlMode = selectedControlMode();
-        const payload = buildPayload(controlMode);
+        const payload = buildPayload(reasoningMode.value);
 
         setBusy(true);
         statusBox.textContent = "Запрос...";
         statusBox.className = "status loading";
-        responseBox.textContent = "Ждем ответ OpenRouter...";
+        visibleReasoningBox.textContent = "Ждем ход рассуждения OpenRouter...";
+        responseBox.textContent = "Ждем итог OpenRouter...";
         responseMeta.textContent = "Метаданные появятся после ответа.";
+        renderGeneratedPrompt({});
 
         try {
           const result = await fetch("/api/chat", {
@@ -346,11 +376,14 @@
             throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
           }
 
-          responseBox.textContent = responseContent(data);
+          visibleReasoningBox.textContent = visibleReasoningContent(data);
+          responseBox.textContent = finalContent(data);
+          renderGeneratedPrompt(data);
           renderMetadata(data);
           statusBox.textContent = "Готово";
           statusBox.className = "status";
         } catch (error) {
+          visibleReasoningBox.textContent = "Запрос завершился ошибкой.";
           responseBox.textContent = error.message;
           responseMeta.textContent = "Метаданные недоступны.";
           statusBox.textContent = "Ошибка";
@@ -367,13 +400,14 @@
           return;
         }
 
-        const payload = buildPayload("none", true);
+        const payload = buildPayload("direct");
 
         setBusy(true);
         compareCard.hidden = false;
         compareStatus.textContent = "Запрос...";
         compareStatus.className = "status loading";
-        compareGrid.textContent = "Запускаем три запроса с одним и тем же user prompt...";
+        compareSummary.textContent = "Запускаем четыре способа. Prompt-chain сделает два API-вызова.";
+        compareGrid.textContent = "";
 
         try {
           const result = await fetch("/api/compare", {
@@ -388,11 +422,12 @@
             throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
           }
 
+          compareSummary.textContent = data.summary || "Сравнение завершено.";
           renderCompareResults(data.results || []);
           compareStatus.textContent = "Готово";
           compareStatus.className = "status";
         } catch (error) {
-          compareGrid.textContent = error.message;
+          compareSummary.textContent = error.message;
           compareStatus.textContent = "Ошибка";
           compareStatus.className = "status error";
         } finally {
@@ -401,7 +436,7 @@
       });
 
       syncSliders();
-      syncControlPanels();
+      syncMethodNote();
     </script>
   </body>
 </html>
