@@ -3,18 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>LLM reasoning demo</title>
+    <title>LLM temperature demo</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 3</p>
-        <h1>Разные способы рассуждения</h1>
+        <p class="eyebrow">AI Advent · День 4</p>
+        <h1>Температура ответа</h1>
         <p class="lead">
-          Более сложная PERT/CPM задача отправляется в OpenRouter четырьмя способами:
-          напрямую, через step-by-step system prompt, через сгенерированный prompt
-          и через группу экспертов.
+          Один prompt отправляется в OpenRouter при temperature 0, 0.7 и 1.2.
         </p>
       </section>
 
@@ -22,102 +20,53 @@
         <form id="chat-form">
           <div class="top-row">
             <label class="field">
-              <span>Задача</span>
-              <textarea id="prompt" name="prompt" rows="12" required>PERT/CPM задача: строительный проект из 14 активностей.
-
-Даны активности, длительности в днях и непосредственные предшественники:
-
-A Excavation — 2 — нет
-B Foundation — 4 — A
-C Walls — 10 — B
-D Roof — 6 — C
-E Exterior enclosure — 4 — C
-F Interior enclosure — 5 — E
-G Exterior walls — 7 — D
-H Exterior painting — 9 — E, G
-I Electrical — 7 — C
-J Partitions — 8 — F, I
-K Flooring — 4 — J
-L Interior painting — 5 — J
-M Exterior finishing — 2 — H
-N Interior finishing — 6 — K, L
-
-Найдите минимальную длительность проекта и критический путь.</textarea>
+              <span>Prompt</span>
+              <textarea id="prompt" name="prompt" rows="8" required>Расскажи короткую комедийную историю о роботе с Claude Mythos на борту. Ровно 5 предложений. Обязательно придумай: 1 неожиданный предмет, 1 странную профессию робота, 1 абсурдную финальную фразу. Не используй списки.</textarea>
             </label>
 
             <aside class="reference">
-              <span class="reference-title">Эталон</span>
-              <p>Минимальная длительность: <strong>44 дня</strong>.</p>
-              <p>Критический путь: <strong>A → B → C → E → F → J → L → N</strong>.</p>
-              <p class="muted">Источник: <a href="https://cpm-pert.com/example-pert-cpm" target="_blank" rel="noreferrer">PERT/CPM Online</a></p>
-              <p class="muted">Авто-проверка ищет число 44 и путь ABCEFJLN в ответе.</p>
+              <span class="reference-title">Фиксировано</span>
+              <p><strong>Модель:</strong> inclusionai/ling-2.6-flash</p>
+              <p><strong>temperature:</strong> 0 · 0.7 · 1.2</p>
+              <p><strong>top_p:</strong> 1.0</p>
+              <p><strong>top_k:</strong> 80</p>
+              <p class="muted">Provider strict: require_parameters=true, allow_fallbacks=false.</p>
             </aside>
           </div>
 
           <div class="config-grid">
-            <label class="field">
-              <span>Способ</span>
-              <select id="reasoning-mode" name="reasoning_mode">
-                <option value="direct">Прямой ответ без инструкций</option>
-                <option value="step">System prompt: решай пошагово</option>
-                <option value="prompt_chain">System prompt: сначала prompt, потом решение</option>
-                <option value="experts">System prompt: аналитик + инженер + критик</option>
-              </select>
-            </label>
-
             <label class="field model-field">
               <span>Модель</span>
               <select id="model" name="model" disabled aria-disabled="true">
-                <option value="deepseek/deepseek-v4-flash" selected>deepseek/deepseek-v4-flash</option>
+                <option value="inclusionai/ling-2.6-flash" selected>inclusionai/ling-2.6-flash</option>
               </select>
             </label>
-          </div>
 
-          <div class="controls">
-            <label class="slider">
-              <span class="slider-title">temperature <strong id="temperature-value">0.4</strong></span>
-              <input id="temperature" name="temperature" type="range" min="0" max="2" step="0.1" value="0.4">
-            </label>
-
-            <label class="slider">
-              <span class="slider-title">top_p <strong id="top-p-value">1.0</strong></span>
-              <input id="top-p" name="top_p" type="range" min="0" max="1" step="0.05" value="1">
-            </label>
-
-            <label class="slider">
-              <span class="slider-title">top_k <strong id="top-k-value">40</strong></span>
-              <input id="top-k" name="top_k" type="range" min="0" max="100" step="1" value="40">
+            <label class="field">
+              <span>Одиночный запуск</span>
+              <select id="temperature-select" name="temperature">
+                <option value="0">temperature = 0</option>
+                <option value="0.7" selected>temperature = 0.7</option>
+                <option value="1.2">temperature = 1.2</option>
+              </select>
             </label>
           </div>
 
           <div class="method-note" id="method-note"></div>
 
           <div class="form-actions">
-            <button id="submit-button" class="submit-button" type="submit">Запустить выбранный способ</button>
-            <button id="compare-button" class="secondary-button" type="button">Сравнить 4 способа</button>
+            <button id="submit-button" class="submit-button" type="submit">Запустить выбранную</button>
+            <button id="compare-button" class="secondary-button" type="button">Сравнить 0 / 0.7 / 1.2</button>
           </div>
         </form>
       </section>
 
       <section class="panel response-card">
         <div class="response-head">
-          <h2>Ответ модели</h2>
+          <h2>Один ответ</h2>
           <span id="status" class="status">Готово</span>
         </div>
-        <div class="response-sections">
-          <article class="answer-block">
-            <h3>Ход рассуждения</h3>
-            <pre id="visible-reasoning">Ход рассуждения появится здесь.</pre>
-          </article>
-          <article class="answer-block">
-            <h3>Итог</h3>
-            <pre id="response">Итог появится здесь.</pre>
-          </article>
-        </div>
-        <div id="generated-prompt-card" class="generated-prompt" hidden>
-          <h3>Сгенерированный prompt</h3>
-          <pre id="generated-prompt"></pre>
-        </div>
+        <pre id="response">Ответ появится здесь.</pre>
         <div id="response-meta" class="response-meta">Метаданные появятся после ответа.</div>
       </section>
 
@@ -132,15 +81,15 @@ N Interior finishing — 6 — K, L
     </main>
 
     <script>
+      const TOP_P = 1;
+      const TOP_K = 80;
+
       const form = document.querySelector("#chat-form");
       const promptInput = document.querySelector("#prompt");
       const modelInput = document.querySelector("#model");
-      const reasoningMode = document.querySelector("#reasoning-mode");
+      const temperatureSelect = document.querySelector("#temperature-select");
       const methodNote = document.querySelector("#method-note");
       const responseBox = document.querySelector("#response");
-      const visibleReasoningBox = document.querySelector("#visible-reasoning");
-      const generatedPromptCard = document.querySelector("#generated-prompt-card");
-      const generatedPromptBox = document.querySelector("#generated-prompt");
       const responseMeta = document.querySelector("#response-meta");
       const statusBox = document.querySelector("#status");
       const submitButton = document.querySelector("#submit-button");
@@ -150,52 +99,33 @@ N Interior finishing — 6 — K, L
       const compareSummary = document.querySelector("#compare-summary");
       const compareStatus = document.querySelector("#compare-status");
 
-      const temperature = document.querySelector("#temperature");
-      const topP = document.querySelector("#top-p");
-      const topK = document.querySelector("#top-k");
-
-      const temperatureValue = document.querySelector("#temperature-value");
-      const topPValue = document.querySelector("#top-p-value");
-      const topKValue = document.querySelector("#top-k-value");
-
-      const methodNotes = {
-        direct: "Baseline: только user prompt. Отдельный ход рассуждения может не появиться.",
-        step: "System injection: просим forward pass, slack check и итог отдельными блоками.",
-        prompt_chain: "Два API-вызова: сначала generated prompt, затем решение с видимым расчетом.",
-        experts: "System injection: аналитик, инженер и критик дают разные проверки перед итогом.",
+      const temperatureNotes = {
+        "0": "0: стабильнее, точнее следует формату, меньше неожиданных ходов.",
+        "0.7": "0.7: баланс точности и креативности.",
+        "1.2": "1.2: максимум вариативности, выше риск странностей.",
       };
 
-      function syncSliders() {
-        temperatureValue.textContent = Number(temperature.value).toFixed(1);
-        topPValue.textContent = Number(topP.value).toFixed(2).replace(/0$/, "");
-        topKValue.textContent = topK.value;
-      }
-
       function syncMethodNote() {
-        methodNote.textContent = methodNotes[reasoningMode.value];
+        methodNote.textContent = temperatureNotes[temperatureSelect.value];
       }
 
-      [temperature, topP, topK].forEach((slider) => {
-        slider.addEventListener("input", syncSliders);
-      });
-      reasoningMode.addEventListener("change", syncMethodNote);
+      temperatureSelect.addEventListener("change", syncMethodNote);
 
-      function buildPayload(mode) {
+      function buildPayload(temperature) {
         return {
           prompt: promptInput.value,
           model: modelInput.value,
-          reasoning_mode: mode,
-          temperature: Number(temperature.value),
-          top_p: Number(topP.value),
-          top_k: Number(topK.value),
-          include_reasoning: true,
+          temperature,
+          top_p: TOP_P,
+          top_k: TOP_K,
+          include_reasoning: false,
         };
       }
 
       function setBusy(isBusy) {
         submitButton.disabled = isBusy;
         compareButton.disabled = isBusy;
-        reasoningMode.disabled = isBusy;
+        temperatureSelect.disabled = isBusy;
       }
 
       function responseContent(data) {
@@ -206,81 +136,63 @@ N Interior finishing — 6 — K, L
         return "content=null: OpenRouter/model не вернул видимый текст.";
       }
 
-      function finalContent(data) {
-        if (data.final_answer !== null && data.final_answer !== undefined && data.final_answer !== "") {
-          return data.final_answer;
-        }
-
-        return responseContent(data);
-      }
-
-      function visibleReasoningContent(data) {
-        if (data.visible_reasoning !== null && data.visible_reasoning !== undefined && data.visible_reasoning !== "") {
-          return data.visible_reasoning;
-        }
-
-        return "Native reasoning не вернулся, а видимый ход рассуждения не был выделен.";
-      }
-
       function evaluationText(evaluation) {
         if (!evaluation) {
-          return "оценка недоступна";
+          return "точность: недоступна";
         }
 
         return `${evaluation.score}/${evaluation.max_score}: ${evaluation.notes.join("; ")}`;
       }
 
+      function diversityText(score) {
+        if (score === null || score === undefined) {
+          return "недоступно";
+        }
+
+        return `${Math.round(score * 100)}% отличия`;
+      }
+
       function renderMetadata(data) {
         const meta = [];
+
+        if (data.label) {
+          meta.push(data.label);
+        }
 
         if (data.finish_reason) {
           meta.push(`finish_reason: ${data.finish_reason}`);
         }
 
         if (data.completion_tokens !== null && data.completion_tokens !== undefined) {
-          meta.push(`answer_tokens: ${data.completion_tokens}`);
+          meta.push(`tokens: ${data.completion_tokens}`);
         }
 
-        if (data.reasoning_tokens !== null && data.reasoning_tokens !== undefined) {
-          meta.push(`reasoning_tokens: ${data.reasoning_tokens}`);
+        if (data.character_count !== null && data.character_count !== undefined) {
+          meta.push(`${data.character_count} символов`);
         }
 
-        if (data.reasoning_source) {
-          meta.push(`reasoning_source: ${data.reasoning_source}`);
-        }
-
-        if (data.prompt_completion_tokens !== null && data.prompt_completion_tokens !== undefined) {
-          meta.push(`prompt_tokens: ${data.prompt_completion_tokens}`);
-        }
-
-        if (data.completion_tokens_total !== null && data.completion_tokens_total !== undefined) {
-          meta.push(`total_tokens: ${data.completion_tokens_total}`);
-        }
-
-        meta.push(`score: ${evaluationText(data.evaluation)}`);
+        meta.push(`точность: ${evaluationText(data.evaluation)}`);
         responseMeta.textContent = meta.join(" · ");
       }
 
-      function renderGeneratedPrompt(data) {
-        if (data.generated_prompt) {
-          generatedPromptBox.textContent = data.generated_prompt;
-          generatedPromptCard.hidden = false;
-          return;
-        }
-
-        generatedPromptBox.textContent = "";
-        generatedPromptCard.hidden = true;
+      function createMetric(label, value) {
+        const item = document.createElement("li");
+        const strong = document.createElement("strong");
+        strong.textContent = `${label}: `;
+        item.append(strong, value);
+        return item;
       }
 
       function createCompareItem(result) {
         const item = document.createElement("article");
-        item.className = `compare-item mode-${result.reasoning_mode || "unknown"}`;
+        const classSuffix = String(result.temperature).replace(".", "-");
+        item.className = `compare-item temp-${classSuffix}`;
 
         const head = document.createElement("div");
         head.className = "compare-item-head";
 
         const title = document.createElement("h3");
-        title.textContent = result.label || result.reasoning_mode || "Способ";
+        title.textContent = result.label || `temperature = ${result.temperature}`;
 
         const badge = document.createElement("span");
         badge.className = result.error ? "compare-badge error" : "compare-badge";
@@ -288,61 +200,34 @@ N Interior finishing — 6 — K, L
 
         head.append(title, badge);
 
-        const sections = document.createElement("div");
-        sections.className = "compare-sections";
-
-        const reasoningBlock = document.createElement("section");
-        reasoningBlock.className = "mini-block";
-        const reasoningTitle = document.createElement("h4");
-        reasoningTitle.textContent = "Ход";
-        const reasoning = document.createElement("pre");
-        reasoning.className = result.error ? "compare-output compare-output-error" : "compare-output compare-reasoning";
-        reasoning.textContent = result.error || visibleReasoningContent(result);
-        reasoningBlock.append(reasoningTitle, reasoning);
-
-        const finalBlock = document.createElement("section");
-        finalBlock.className = "mini-block";
-        const finalTitle = document.createElement("h4");
-        finalTitle.textContent = "Итог";
         const content = document.createElement("pre");
         const hasNullContent = !result.error && (result.content === null || result.content === undefined || result.content === "");
         content.className = result.error || hasNullContent ? "compare-output compare-output-error" : "compare-output compare-final";
-        content.textContent = result.error || finalContent(result);
-        finalBlock.append(finalTitle, content);
-        sections.append(reasoningBlock, finalBlock);
+        content.textContent = result.error || responseContent(result);
+
+        const metrics = document.createElement("ul");
+        metrics.className = "metric-list";
+        metrics.append(
+          createMetric("Креативность", result.creativity_note || "недоступно"),
+          createMetric("Разнообразие", diversityText(result.diversity_score)),
+          createMetric("Подходит", result.recommended_for || "недоступно"),
+        );
 
         const meta = document.createElement("div");
         meta.className = "response-meta";
         const metaItems = [];
-        if (result.completion_tokens_total !== null && result.completion_tokens_total !== undefined) {
-          metaItems.push(`${result.completion_tokens_total} total tokens`);
-        } else if (result.completion_tokens !== null && result.completion_tokens !== undefined) {
-          metaItems.push(`${result.completion_tokens} answer tokens`);
+        if (result.completion_tokens !== null && result.completion_tokens !== undefined) {
+          metaItems.push(`${result.completion_tokens} tokens`);
         }
         if (result.character_count) {
           metaItems.push(`${result.character_count} символов`);
         }
-        if (result.generated_prompt) {
-          metaItems.push("есть generated prompt");
-        }
-        if (result.reasoning_source) {
-          metaItems.push(result.reasoning_source);
+        if (result.sentence_count !== null && result.sentence_count !== undefined) {
+          metaItems.push(`${result.sentence_count} предложений`);
         }
         meta.textContent = metaItems.length ? metaItems.join(" · ") : "Метаданные отсутствуют.";
 
-        if (result.generated_prompt) {
-          const promptDetails = document.createElement("details");
-          promptDetails.className = "prompt-details";
-          const summary = document.createElement("summary");
-          summary.textContent = "Показать generated prompt";
-          const generated = document.createElement("pre");
-          generated.textContent = result.generated_prompt;
-          promptDetails.append(summary, generated);
-          item.append(head, sections, promptDetails, meta);
-        } else {
-          item.append(head, sections, meta);
-        }
-
+        item.append(head, content, metrics, meta);
         return item;
       }
 
@@ -353,15 +238,13 @@ N Interior finishing — 6 — K, L
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
 
-        const payload = buildPayload(reasoningMode.value);
+        const payload = buildPayload(Number(temperatureSelect.value));
 
         setBusy(true);
         statusBox.textContent = "Запрос...";
         statusBox.className = "status loading";
-        visibleReasoningBox.textContent = "Ждем ход рассуждения OpenRouter...";
-        responseBox.textContent = "Ждем итог OpenRouter...";
+        responseBox.textContent = "Ждем ответ OpenRouter...";
         responseMeta.textContent = "Метаданные появятся после ответа.";
-        renderGeneratedPrompt({});
 
         try {
           const result = await fetch("/api/chat", {
@@ -376,14 +259,11 @@ N Interior finishing — 6 — K, L
             throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
           }
 
-          visibleReasoningBox.textContent = visibleReasoningContent(data);
-          responseBox.textContent = finalContent(data);
-          renderGeneratedPrompt(data);
+          responseBox.textContent = responseContent(data);
           renderMetadata(data);
           statusBox.textContent = "Готово";
           statusBox.className = "status";
         } catch (error) {
-          visibleReasoningBox.textContent = "Запрос завершился ошибкой.";
           responseBox.textContent = error.message;
           responseMeta.textContent = "Метаданные недоступны.";
           statusBox.textContent = "Ошибка";
@@ -400,13 +280,13 @@ N Interior finishing — 6 — K, L
           return;
         }
 
-        const payload = buildPayload("direct");
+        const payload = buildPayload(Number(temperatureSelect.value));
 
         setBusy(true);
         compareCard.hidden = false;
         compareStatus.textContent = "Запрос...";
         compareStatus.className = "status loading";
-        compareSummary.textContent = "Запускаем четыре способа. Prompt-chain сделает два API-вызова.";
+        compareSummary.textContent = "Запускаем три запроса с одинаковым prompt.";
         compareGrid.textContent = "";
 
         try {
@@ -435,7 +315,6 @@ N Interior finishing — 6 — K, L
         }
       });
 
-      syncSliders();
       syncMethodNote();
     </script>
   </body>

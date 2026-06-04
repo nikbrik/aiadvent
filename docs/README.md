@@ -7,9 +7,11 @@ This directory is the source of truth for project documentation.
 - `specs/assignment-1-rest-web-demo.md` - initial REST/web/Android demo requirements.
 - `specs/assignment-2-response-control.md` - response-control assignment requirements.
 - `specs/assignment-3-reasoning-modes.md` - reasoning-mode assignment requirements.
+- `specs/assignment-4-temperature.md` - temperature comparison assignment requirements.
 - `specs/submission-snapshot-policy.md` - project rule for daily snapshot submissions and previous-assignment compatibility.
 - `agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider debugging notes, and guardrails for future Codex/Cursor sessions.
 - `agent-notes/llm-demo-assignment-3.md` - Day 3 reasoning-mode implementation notes.
+- `agent-notes/llm-demo-assignment-4.md` - Day 4 temperature comparison implementation notes.
 
 ## Agent Entrypoints
 

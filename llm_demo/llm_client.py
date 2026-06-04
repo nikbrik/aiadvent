@@ -8,7 +8,7 @@ from http_log import log_exchange
 logger = logging.getLogger("llm_demo")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_MODEL = "inclusionai/ling-2.6-flash"
 TIMEOUT_SECONDS = 60.0
 
 

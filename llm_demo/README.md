@@ -2,7 +2,7 @@
 
 Учебное демо для AI Advent: браузер отправляет задачу и параметры генерации в Python backend, backend делает явный REST POST через `httpx` к OpenRouter.
 
-Текущий снапшот реализует День 3: сравнение разных способов рассуждения на одной аналитической задаче.
+Текущий снапшот реализует День 4: сравнение ответов при разных `temperature`.
 
 ## Что внутри
 
@@ -16,23 +16,36 @@
 - `../docs/specs/assignment-1-rest-web-demo.md`
 - `../docs/specs/assignment-2-response-control.md`
 - `../docs/specs/assignment-3-reasoning-modes.md`
+- `../docs/specs/assignment-4-temperature.md`
 - `../docs/agent-notes/llm-demo-assignment-2.md`
 - `../docs/agent-notes/llm-demo-assignment-3.md`
+- `../docs/agent-notes/llm-demo-assignment-4.md`
 
-## День 3
+## День 4
 
-UI сравнивает четыре режима:
+UI сравнивает один prompt при трех настройках:
 
-| Режим | Что отправляется |
+| Temperature | Назначение |
 | --- | --- |
-| `direct` | Только user task, без дополнительных инструкций |
-| `step` | `system` injection: `Решай пошагово` |
-| `prompt_chain` | Два API-вызова: generated prompt, затем решение |
-| `experts` | `system` injection: аналитик, инженер, критик |
+| `0` | воспроизводимость и формат |
+| `0.7` | баланс точности и живости |
+| `1.2` | креативность и разнообразие |
 
-Для дефолтной задачи эталон: `44 дня`, критический путь `A → B → C → E → F → J → L → N`. Backend показывает score `0/2`, `1/2` или `2/2`.
+Backend делает три OpenRouter вызова с одинаковыми `prompt`, `model`, `top_p=1` и `top_k=80`.
+Модель по умолчанию: `inclusionai/ling-2.6-flash`, потому что она бюджетная, прошла real OpenRouter check
+и поддерживает `temperature`, `top_p`, `top_k` без reasoning-mode ограничений.
 
-UI отдельно показывает ход рассуждения и итог. Если OpenRouter вернул native reasoning, используется он; иначе показывается видимый расчет из обычного ответа модели.
+Provider routing отправляется со строгими параметрами:
+
+```json
+{"allow_fallbacks": false, "require_parameters": true}
+```
+
+Backend показывает эвристики:
+
+- точность: соблюдение ограничений prompt;
+- креативность: интерпретация по выбранной температуре;
+- разнообразие: отличие текста от двух других ответов.
 
 ## Запуск
 
@@ -68,14 +81,14 @@ ipconfig getifaddr en0
 http://<IP_ноутбука>:5000
 ```
 
-4. Для видео: введите prompt, измените `temperature`, `top_p` или `top_k`, отправьте запрос и покажите ответ.
+4. Для видео: нажмите «Сравнить 0 / 0.7 / 1.2» и покажите три ответа с выводами.
 
 ## Переменные окружения
 
 | Переменная | Описание |
 | --- | --- |
 | `OPENROUTER_API_KEY` | Обязательный API-ключ OpenRouter |
-| `OPENROUTER_MODEL` | Модель, default `deepseek/deepseek-v4-flash` |
+| `OPENROUTER_MODEL` | Модель, default `inclusionai/ling-2.6-flash` |
 | `HOST` | Host Flask, default `0.0.0.0` |
 | `PORT` | Port Flask, default `5000` |
 

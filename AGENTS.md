@@ -10,9 +10,11 @@ Canonical documentation:
 - `docs/specs/assignment-1-rest-web-demo.md` - original REST + web + Android demo spec.
 - `docs/specs/assignment-2-response-control.md` - response-control assignment spec.
 - `docs/specs/assignment-3-reasoning-modes.md` - reasoning-mode assignment spec.
+- `docs/specs/assignment-4-temperature.md` - temperature comparison assignment spec.
 - `docs/specs/submission-snapshot-policy.md` - snapshot submission policy.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
 - `docs/agent-notes/llm-demo-assignment-3.md` - Day 3 implementation decisions and checks.
+- `docs/agent-notes/llm-demo-assignment-4.md` - Day 4 implementation decisions and checks.
 
 Tool-specific files stay thin. Do not duplicate long specs in `.cursor/rules`, `.agents`, or assistant-specific dirs; link docs above.
 
@@ -48,6 +50,7 @@ Assignment-specific rules apply only when actively working on that assignment:
 
 - Day 2 response-control mode rules live in `docs/specs/assignment-2-response-control.md` and `docs/agent-notes/llm-demo-assignment-2.md`.
 - Day 3 reasoning-mode rules live in `docs/specs/assignment-3-reasoning-modes.md` and `docs/agent-notes/llm-demo-assignment-3.md`.
+- Day 4 temperature comparison rules live in `docs/specs/assignment-4-temperature.md` and `docs/agent-notes/llm-demo-assignment-4.md`.
 
 Before changing assignment-specific behavior, read the matching spec and agent notes.
 
