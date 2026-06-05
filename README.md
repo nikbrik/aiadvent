@@ -13,6 +13,8 @@
 
 Начинайте с `docs/README.md`. Спецификации лежат в `docs/specs/`, а отладочные решения для будущих агентских сессий - в `docs/agent-notes/`.
 
+Текущий снапшот: День 5, сравнение разных китайских моделей. См. `docs/specs/assignment-5-model-versions.md` и `docs/agent-notes/llm-demo-assignment-5.md`.
+
 ## Запуск демо
 
 ```bash

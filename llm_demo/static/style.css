@@ -381,15 +381,15 @@ pre {
   font-size: 0.68rem;
 }
 
-.compare-item.temp-0 {
+.compare-item.model-weak {
   border-top-color: var(--accent);
 }
 
-.compare-item.temp-0-7 {
+.compare-item.model-medium {
   border-top-color: var(--warn);
 }
 
-.compare-item.temp-1-2 {
+.compare-item.model-strong {
   border-top-color: var(--ok);
 }
 
@@ -402,6 +402,12 @@ pre {
 .compare-item h3 {
   font-size: 0.95rem;
   line-height: 1.25;
+}
+
+.model-subline {
+  margin: 0;
+  color: var(--muted);
+  font: 750 0.76rem/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .compare-badge {
@@ -418,6 +424,29 @@ pre {
 .compare-badge.error {
   color: var(--danger);
   background: rgba(180, 35, 24, 0.11);
+}
+
+.model-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-links a {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: var(--accent-dark);
+  background: #ffffff;
+  font: 800 0.7rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-decoration: none;
+}
+
+.model-links a:hover,
+.model-links a:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  outline: none;
 }
 
 .compare-output {

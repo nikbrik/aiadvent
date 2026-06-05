@@ -1,0 +1,307 @@
+{
+  "task": "Ты CTO интернет-магазина и выбираешь LLM для трех задач: 1) быстрые FAQ-ответы клиентам, где важны скорость и низкая цена; 2) анализ 40-страничного договора поставки, где важны качество и длинный контекст; 3) поиск ошибки в SQL-запросе, где важны точность и объяснение риска. Составь markdown-таблицу с колонками: Задача, Выбор модели (weak/medium/strong), Почему, Риск. После таблицы добавь короткий вывод из 2 предложений. Обязательно сравни качество, скорость, стоимость и ресурсоемкость. Не выдумывай внешние факты.",
+  "models": [
+    {
+      "tier": "weak",
+      "label": "Weak · Qwen3 8B",
+      "model": "qwen/qwen3-8b",
+      "lab": "Alibaba Qwen",
+      "scale": "8.2B dense",
+      "parameters": "8.2B",
+      "active_parameters": "8.2B",
+      "architecture": "dense",
+      "context_window": "131K",
+      "release": "2025-04-28",
+      "pricing": {
+        "input": 0.05,
+        "output": 0.4
+      },
+      "reasoning": {
+        "exclude": true
+      },
+      "links": {
+        "openrouter": "https://openrouter.ai/qwen/qwen3-8b",
+        "hf": "https://huggingface.co/Qwen/Qwen3-8B"
+      },
+      "recommended_for": "Малый baseline: простые черновики и дешевые ответы с повышенным риском ошибок."
+    },
+    {
+      "tier": "medium",
+      "label": "Medium · Z.ai GLM 4.7 Flash",
+      "model": "z-ai/glm-4.7-flash",
+      "lab": "Z.ai / Zhipu",
+      "scale": "30B-class MoE",
+      "parameters": "30B-class",
+      "active_parameters": "MoE active set not specified",
+      "architecture": "MoE",
+      "context_window": "203K",
+      "release": "2026-01-19",
+      "pricing": {
+        "input": 0.06,
+        "output": 0.4
+      },
+      "reasoning": {
+        "exclude": true
+      },
+      "links": {
+        "openrouter": "https://openrouter.ai/z-ai/glm-4.7-flash",
+        "hf": "https://huggingface.co/zai-org/GLM-4.7-Flash"
+      },
+      "recommended_for": "Средний класс: заметно больше reasoning/agentic capacity при still-low цене."
+    },
+    {
+      "tier": "strong",
+      "label": "Strong · DeepSeek V4 Pro",
+      "model": "deepseek/deepseek-v4-pro",
+      "lab": "DeepSeek",
+      "scale": "1.6T total / 49B active",
+      "parameters": "1.6T total",
+      "active_parameters": "49B active",
+      "architecture": "MoE",
+      "context_window": "1M",
+      "release": "2026-04-24",
+      "pricing": {
+        "input": 0.435,
+        "output": 0.87
+      },
+      "reasoning": {
+        "exclude": true
+      },
+      "links": {
+        "openrouter": "https://openrouter.ai/deepseek/deepseek-v4-pro",
+        "hf": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"
+      },
+      "recommended_for": "Сложный reasoning, длинный контекст, кодовая база целиком и финальная проверка."
+    }
+  ],
+  "summary": [
+    {
+      "tier": "weak",
+      "label": "Weak · Qwen3 8B",
+      "model": "qwen/qwen3-8b",
+      "routed_models": [
+        "qwen/qwen3-8b-04-28"
+      ],
+      "success": 3,
+      "attempts": 3,
+      "avg_duration_ms": 14091.333333,
+      "avg_total_tokens": 1100,
+      "avg_prompt_tokens": 184,
+      "avg_completion_tokens": 916,
+      "avg_reasoning_tokens": 620.666667,
+      "avg_cached_tokens": 0,
+      "avg_cost": 0.000376,
+      "score_values": [
+        9,
+        9,
+        9
+      ],
+      "max_score": 9,
+      "duration_ms_values": [
+        13795,
+        14868,
+        13611
+      ],
+      "total_tokens_values": [
+        1115,
+        1138,
+        1047
+      ],
+      "reasoning_tokens_values": [
+        586,
+        688,
+        588
+      ],
+      "cost_values": [
+        0.0003816,
+        0.0003908,
+        0.0003544
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "cost_details": [
+        {
+          "upstream_inference_cost": 0.0003816,
+          "upstream_inference_prompt_cost": 9.2e-06,
+          "upstream_inference_completions_cost": 0.0003724
+        },
+        {
+          "upstream_inference_cost": 0.0003908,
+          "upstream_inference_prompt_cost": 9.2e-06,
+          "upstream_inference_completions_cost": 0.0003816
+        },
+        {
+          "upstream_inference_cost": 0.0003544,
+          "upstream_inference_prompt_cost": 9.2e-06,
+          "upstream_inference_completions_cost": 0.0003452
+        }
+      ],
+      "sample_notes": [
+        "таблица есть",
+        "3 задачи найдены",
+        "weak/medium/strong есть",
+        "качество найдено",
+        "скорость найдена",
+        "стоимость найдена",
+        "ресурсоемкость найдена",
+        "вывод найден",
+        "без внешних model facts"
+      ]
+    },
+    {
+      "tier": "medium",
+      "label": "Medium · Z.ai GLM 4.7 Flash",
+      "model": "z-ai/glm-4.7-flash",
+      "routed_models": [
+        "z-ai/glm-4.7-flash-20260119"
+      ],
+      "success": 3,
+      "attempts": 3,
+      "avg_duration_ms": 42433.333333,
+      "avg_total_tokens": 2766.333333,
+      "avg_prompt_tokens": 157,
+      "avg_completion_tokens": 2609.333333,
+      "avg_reasoning_tokens": 2564,
+      "avg_cached_tokens": 106.666667,
+      "avg_cost": 0.001048,
+      "score_values": [
+        8,
+        7,
+        7
+      ],
+      "max_score": 9,
+      "duration_ms_values": [
+        25661,
+        67806,
+        33833
+      ],
+      "total_tokens_values": [
+        2504,
+        2943,
+        2852
+      ],
+      "reasoning_tokens_values": [
+        2616,
+        2275,
+        2801
+      ],
+      "cost_values": [
+        0.00094502,
+        0.00111742,
+        0.00108102
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "cost_details": [
+        {
+          "upstream_inference_cost": 0.00094502,
+          "upstream_inference_prompt_cost": 6.22e-06,
+          "upstream_inference_completions_cost": 0.0009388
+        },
+        {
+          "upstream_inference_cost": 0.00111742,
+          "upstream_inference_prompt_cost": 3.02e-06,
+          "upstream_inference_completions_cost": 0.0011144
+        },
+        {
+          "upstream_inference_cost": 0.00108102,
+          "upstream_inference_prompt_cost": 3.02e-06,
+          "upstream_inference_completions_cost": 0.001078
+        }
+      ],
+      "sample_notes": [
+        "таблица есть",
+        "3 задачи найдены",
+        "не все tier найдены",
+        "качество найдено",
+        "скорость найдена",
+        "стоимость найдена",
+        "ресурсоемкость найдена",
+        "вывод найден",
+        "без внешних model facts"
+      ]
+    },
+    {
+      "tier": "strong",
+      "label": "Strong · DeepSeek V4 Pro",
+      "model": "deepseek/deepseek-v4-pro",
+      "routed_models": [
+        "deepseek/deepseek-v4-pro-20260423"
+      ],
+      "success": 3,
+      "attempts": 3,
+      "avg_duration_ms": 39628.333333,
+      "avg_total_tokens": 1989.333333,
+      "avg_prompt_tokens": 174,
+      "avg_completion_tokens": 1815.333333,
+      "avg_reasoning_tokens": 1240,
+      "avg_cached_tokens": 79,
+      "avg_cost": 0.002838,
+      "score_values": [
+        9,
+        8,
+        8
+      ],
+      "max_score": 9,
+      "duration_ms_values": [
+        37231,
+        46492,
+        35162
+      ],
+      "total_tokens_values": [
+        1895,
+        2327,
+        1746
+      ],
+      "reasoning_tokens_values": [
+        1202,
+        1524,
+        994
+      ],
+      "cost_values": [
+        0.002695563,
+        0.0033505425,
+        0.002468934
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "cost_details": [
+        {
+          "upstream_inference_cost": 0.002695563,
+          "upstream_inference_prompt_cost": 7.7922e-05,
+          "upstream_inference_completions_cost": 0.002617641
+        },
+        {
+          "upstream_inference_cost": 0.0033505425,
+          "upstream_inference_prompt_cost": 7.58295e-05,
+          "upstream_inference_completions_cost": 0.003274713
+        },
+        {
+          "upstream_inference_cost": 0.002468934,
+          "upstream_inference_prompt_cost": 7.7922e-05,
+          "upstream_inference_completions_cost": 0.002391012
+        }
+      ],
+      "sample_notes": [
+        "таблица есть",
+        "3 задачи найдены",
+        "weak/medium/strong есть",
+        "качество найдено",
+        "скорость найдена",
+        "стоимость найдена",
+        "ресурсоемкость найдена",
+        "вывод найден",
+        "без внешних model facts"
+      ]
+    }
+  ]
+}

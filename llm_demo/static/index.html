@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>LLM temperature demo</title>
+    <title>LLM model versions demo</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 4</p>
-        <h1>Температура ответа</h1>
+        <p class="eyebrow">AI Advent · День 5</p>
+        <h1>Версии моделей</h1>
         <p class="lead">
-          Один prompt отправляется в OpenRouter при temperature 0, 0.7 и 1.2.
+          Один prompt отправляется в OpenRouter на три разные китайские модели: Qwen, Z.ai и DeepSeek.
         </p>
       </section>
 
@@ -21,33 +21,26 @@
           <div class="top-row">
             <label class="field">
               <span>Prompt</span>
-              <textarea id="prompt" name="prompt" rows="8" required>Расскажи короткую комедийную историю о роботе с Claude Mythos на борту. Ровно 5 предложений. Обязательно придумай: 1 неожиданный предмет, 1 странную профессию робота, 1 абсурдную финальную фразу. Не используй списки.</textarea>
+              <textarea id="prompt" name="prompt" rows="8" required>Ты CTO интернет-магазина и выбираешь LLM для трех задач: 1) быстрые FAQ-ответы клиентам, где важны скорость и низкая цена; 2) анализ 40-страничного договора поставки, где важны качество и длинный контекст; 3) поиск ошибки в SQL-запросе, где важны точность и объяснение риска. Составь markdown-таблицу с колонками: Задача, Выбор модели (weak/medium/strong), Почему, Риск. После таблицы добавь короткий вывод из 2 предложений. Обязательно сравни качество, скорость, стоимость и ресурсоемкость. Не выдумывай внешние факты.</textarea>
             </label>
 
             <aside class="reference">
               <span class="reference-title">Фиксировано</span>
-              <p><strong>Модель:</strong> inclusionai/ling-2.6-flash</p>
-              <p><strong>temperature:</strong> 0 · 0.7 · 1.2</p>
-              <p><strong>top_p:</strong> 1.0</p>
-              <p><strong>top_k:</strong> 80</p>
-              <p class="muted">Provider strict: require_parameters=true, allow_fallbacks=false.</p>
+              <p><strong>prompt:</strong> один и тот же</p>
+              <p><strong>model:</strong> weak · medium · strong</p>
+              <p><strong>usage:</strong> include=true</p>
+              <p><strong>reasoning:</strong> exclude=true</p>
+              <p class="muted">Provider routing: allow_fallbacks=false.</p>
             </aside>
           </div>
 
           <div class="config-grid">
             <label class="field model-field">
-              <span>Модель</span>
-              <select id="model" name="model" disabled aria-disabled="true">
-                <option value="inclusionai/ling-2.6-flash" selected>inclusionai/ling-2.6-flash</option>
-              </select>
-            </label>
-
-            <label class="field">
               <span>Одиночный запуск</span>
-              <select id="temperature-select" name="temperature">
-                <option value="0">temperature = 0</option>
-                <option value="0.7" selected>temperature = 0.7</option>
-                <option value="1.2">temperature = 1.2</option>
+              <select id="model" name="model">
+                <option value="qwen/qwen3-8b" selected>Weak · Qwen3 8B</option>
+                <option value="z-ai/glm-4.7-flash">Medium · Z.ai GLM 4.7 Flash</option>
+                <option value="deepseek/deepseek-v4-pro">Strong · DeepSeek V4 Pro</option>
               </select>
             </label>
           </div>
@@ -56,7 +49,7 @@
 
           <div class="form-actions">
             <button id="submit-button" class="submit-button" type="submit">Запустить выбранную</button>
-            <button id="compare-button" class="secondary-button" type="button">Сравнить 0 / 0.7 / 1.2</button>
+            <button id="compare-button" class="secondary-button" type="button">Сравнить weak / medium / strong</button>
           </div>
         </form>
       </section>
@@ -81,13 +74,15 @@
     </main>
 
     <script>
-      const TOP_P = 1;
-      const TOP_K = 80;
+      const modelNotes = {
+        "qwen/qwen3-8b": "Weak: Alibaba Qwen, 8.2B dense, дешевый paid baseline, context 131K.",
+        "z-ai/glm-4.7-flash": "Medium: Z.ai/Zhipu, 30B-class MoE, заметно сильнее small baseline, context 203K.",
+        "deepseek/deepseek-v4-pro": "Strong: DeepSeek, 1.6T total / 49B active, длинный context 1M.",
+      };
 
       const form = document.querySelector("#chat-form");
       const promptInput = document.querySelector("#prompt");
       const modelInput = document.querySelector("#model");
-      const temperatureSelect = document.querySelector("#temperature-select");
       const methodNote = document.querySelector("#method-note");
       const responseBox = document.querySelector("#response");
       const responseMeta = document.querySelector("#response-meta");
@@ -99,33 +94,23 @@
       const compareSummary = document.querySelector("#compare-summary");
       const compareStatus = document.querySelector("#compare-status");
 
-      const temperatureNotes = {
-        "0": "0: стабильнее, точнее следует формату, меньше неожиданных ходов.",
-        "0.7": "0.7: баланс точности и креативности.",
-        "1.2": "1.2: максимум вариативности, выше риск странностей.",
-      };
-
       function syncMethodNote() {
-        methodNote.textContent = temperatureNotes[temperatureSelect.value];
+        methodNote.textContent = modelNotes[modelInput.value] || modelInput.value;
       }
 
-      temperatureSelect.addEventListener("change", syncMethodNote);
+      modelInput.addEventListener("change", syncMethodNote);
 
-      function buildPayload(temperature) {
+      function buildPayload(model) {
         return {
           prompt: promptInput.value,
-          model: modelInput.value,
-          temperature,
-          top_p: TOP_P,
-          top_k: TOP_K,
-          include_reasoning: false,
+          model,
         };
       }
 
       function setBusy(isBusy) {
         submitButton.disabled = isBusy;
         compareButton.disabled = isBusy;
-        temperatureSelect.disabled = isBusy;
+        modelInput.disabled = isBusy;
       }
 
       function responseContent(data) {
@@ -138,18 +123,70 @@
 
       function evaluationText(evaluation) {
         if (!evaluation) {
-          return "точность: недоступна";
+          return "качество: недоступно";
         }
 
         return `${evaluation.score}/${evaluation.max_score}: ${evaluation.notes.join("; ")}`;
       }
 
-      function diversityText(score) {
-        if (score === null || score === undefined) {
+      function durationText(value) {
+        if (value === null || value === undefined) {
           return "недоступно";
         }
 
-        return `${Math.round(score * 100)}% отличия`;
+        return `${Math.round(value)} ms`;
+      }
+
+      function tokensText(data) {
+        const total = data.total_tokens ?? "n/a";
+        const prompt = data.prompt_tokens ?? "n/a";
+        const completion = data.completion_tokens ?? "n/a";
+        const reasoning = data.reasoning_tokens ?? "n/a";
+        const cached = data.cached_tokens ?? "n/a";
+        return `${total} total · ${prompt} prompt · ${completion} completion · ${reasoning} reasoning · ${cached} cached`;
+      }
+
+      function costText(data) {
+        if (data.cost === null || data.cost === undefined) {
+          return "недоступно";
+        }
+
+        const suffix = data.cost_estimated ? " estimate" : "";
+        return `$${Number(data.cost).toFixed(6)}${suffix}`;
+      }
+
+      function priceText(data) {
+        if (!data.pricing || data.pricing.input === null || data.pricing.output === null) {
+          return "недоступно";
+        }
+
+        return `$${data.pricing.input}/M input · $${data.pricing.output}/M output`;
+      }
+
+      function costDetailsText(data) {
+        if (!data.cost_details) {
+          return "недоступно";
+        }
+
+        const details = data.cost_details;
+        const total = details.upstream_inference_cost ?? data.cost;
+        const prompt = details.upstream_inference_prompt_cost ?? "n/a";
+        const completion = details.upstream_inference_completions_cost ?? "n/a";
+        return `total ${total} · prompt ${prompt} · completion ${completion}`;
+      }
+
+      function modelSpecText(data) {
+        return `${data.parameters || data.scale || "unknown"} · active ${data.active_parameters || "unknown"} · ${data.architecture || "unknown"} · context ${data.context_window || "unknown"}`;
+      }
+
+      function reasoningText(data) {
+        if (!data.reasoning_policy) {
+          return "недоступно";
+        }
+
+        return Object.entries(data.reasoning_policy)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(", ");
       }
 
       function renderMetadata(data) {
@@ -159,19 +196,22 @@
           meta.push(data.label);
         }
 
+        meta.push(`model: ${modelSpecText(data)}`);
+        meta.push(`time: ${durationText(data.duration_ms)}`);
+        meta.push(`tokens: ${tokensText(data)}`);
+        meta.push(`cost: ${costText(data)}`);
+        meta.push(`pricing: ${priceText(data)}`);
+        meta.push(`reasoning: ${reasoningText(data)}`);
+
         if (data.finish_reason) {
           meta.push(`finish_reason: ${data.finish_reason}`);
         }
 
-        if (data.completion_tokens !== null && data.completion_tokens !== undefined) {
-          meta.push(`tokens: ${data.completion_tokens}`);
+        if (data.reasoning_tokens !== null && data.reasoning_tokens !== undefined) {
+          meta.push(`reasoning_tokens: ${data.reasoning_tokens}`);
         }
 
-        if (data.character_count !== null && data.character_count !== undefined) {
-          meta.push(`${data.character_count} символов`);
-        }
-
-        meta.push(`точность: ${evaluationText(data.evaluation)}`);
+        meta.push(`качество: ${evaluationText(data.evaluation)}`);
         responseMeta.textContent = meta.join(" · ");
       }
 
@@ -183,22 +223,49 @@
         return item;
       }
 
+      function createLink(label, href) {
+        const link = document.createElement("a");
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.textContent = label;
+        return link;
+      }
+
+      function createLinkRow(result) {
+        const row = document.createElement("div");
+        row.className = "model-links";
+
+        if (result.links && result.links.openrouter) {
+          row.append(createLink("OpenRouter", result.links.openrouter));
+        }
+
+        if (result.links && result.links.hf) {
+          row.append(createLink("HF", result.links.hf));
+        }
+
+        return row;
+      }
+
       function createCompareItem(result) {
         const item = document.createElement("article");
-        const classSuffix = String(result.temperature).replace(".", "-");
-        item.className = `compare-item temp-${classSuffix}`;
+        item.className = `compare-item model-${result.tier || "custom"}`;
 
         const head = document.createElement("div");
         head.className = "compare-item-head";
 
         const title = document.createElement("h3");
-        title.textContent = result.label || `temperature = ${result.temperature}`;
+        title.textContent = result.label || result.model;
+
+        const subline = document.createElement("p");
+        subline.className = "model-subline";
+        subline.textContent = `${result.lab || "unknown"} · ${modelSpecText(result)}`;
 
         const badge = document.createElement("span");
         badge.className = result.error ? "compare-badge error" : "compare-badge";
         badge.textContent = result.error ? `HTTP ${result.status || "error"}` : evaluationText(result.evaluation);
 
-        head.append(title, badge);
+        head.append(title, subline, badge, createLinkRow(result));
 
         const content = document.createElement("pre");
         const hasNullContent = !result.error && (result.content === null || result.content === undefined || result.content === "");
@@ -208,22 +275,30 @@
         const metrics = document.createElement("ul");
         metrics.className = "metric-list";
         metrics.append(
-          createMetric("Креативность", result.creativity_note || "недоступно"),
-          createMetric("Разнообразие", diversityText(result.diversity_score)),
-          createMetric("Подходит", result.recommended_for || "недоступно"),
+          createMetric("Time", durationText(result.duration_ms)),
+          createMetric("Model", modelSpecText(result)),
+          createMetric("Tokens", tokensText(result)),
+          createMetric("Cost", costText(result)),
+          createMetric("Cost details", costDetailsText(result)),
+          createMetric("Pricing", priceText(result)),
+          createMetric("Reasoning", reasoningText(result)),
+          createMetric("Use", result.recommended_for || "недоступно"),
         );
 
         const meta = document.createElement("div");
         meta.className = "response-meta";
         const metaItems = [];
-        if (result.completion_tokens !== null && result.completion_tokens !== undefined) {
-          metaItems.push(`${result.completion_tokens} tokens`);
+        if (result.model) {
+          metaItems.push(`model: ${result.model}`);
+        }
+        if (result.id) {
+          metaItems.push(`id: ${result.id}`);
+        }
+        if (result.finish_reason) {
+          metaItems.push(`finish_reason: ${result.finish_reason}`);
         }
         if (result.character_count) {
           metaItems.push(`${result.character_count} символов`);
-        }
-        if (result.sentence_count !== null && result.sentence_count !== undefined) {
-          metaItems.push(`${result.sentence_count} предложений`);
         }
         meta.textContent = metaItems.length ? metaItems.join(" · ") : "Метаданные отсутствуют.";
 
@@ -238,7 +313,7 @@
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
 
-        const payload = buildPayload(Number(temperatureSelect.value));
+        const payload = buildPayload(modelInput.value);
 
         setBusy(true);
         statusBox.textContent = "Запрос...";
@@ -280,7 +355,7 @@
           return;
         }
 
-        const payload = buildPayload(Number(temperatureSelect.value));
+        const payload = buildPayload(modelInput.value);
 
         setBusy(true);
         compareCard.hidden = false;

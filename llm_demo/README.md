@@ -2,7 +2,7 @@
 
 Учебное демо для AI Advent: браузер отправляет задачу и параметры генерации в Python backend, backend делает явный REST POST через `httpx` к OpenRouter.
 
-Текущий снапшот реализует День 4: сравнение ответов при разных `temperature`.
+Текущий снапшот реализует День 5: сравнение ответов разных китайских моделей.
 
 ## Что внутри
 
@@ -17,35 +17,42 @@
 - `../docs/specs/assignment-2-response-control.md`
 - `../docs/specs/assignment-3-reasoning-modes.md`
 - `../docs/specs/assignment-4-temperature.md`
+- `../docs/specs/assignment-5-model-versions.md`
 - `../docs/agent-notes/llm-demo-assignment-2.md`
 - `../docs/agent-notes/llm-demo-assignment-3.md`
 - `../docs/agent-notes/llm-demo-assignment-4.md`
+- `../docs/agent-notes/llm-demo-assignment-5.md`
 
-## День 4
+## День 5
 
-UI сравнивает один prompt при трех настройках:
+UI сравнивает один prompt на трех моделях:
 
-| Temperature | Назначение |
-| --- | --- |
-| `0` | воспроизводимость и формат |
-| `0.7` | баланс точности и живости |
-| `1.2` | креативность и разнообразие |
+| Tier | Model | Lab | Scale |
+| --- | --- | --- | --- |
+| weak | `qwen/qwen3-8b` | Alibaba Qwen | 8.2B dense |
+| medium | `z-ai/glm-4.7-flash` | Z.ai / Zhipu | 30B-class MoE |
+| strong | `deepseek/deepseek-v4-pro` | DeepSeek | 1.6T total / 49B active |
 
-Backend делает три OpenRouter вызова с одинаковыми `prompt`, `model`, `top_p=1` и `top_k=80`.
-Модель по умолчанию: `inclusionai/ling-2.6-flash`, потому что она бюджетная, прошла real OpenRouter check
-и поддерживает `temperature`, `top_p`, `top_k` без reasoning-mode ограничений.
+Backend делает три OpenRouter вызова с одинаковым `prompt`. Generation parameters не задаются: без `temperature`, `top_p`, `top_k`, `max_tokens`, `stop` и `response_format`.
 
-Provider routing отправляется со строгими параметрами:
+Provider routing отправляется без fallback:
 
 ```json
-{"allow_fallbacks": false, "require_parameters": true}
+{"allow_fallbacks": false}
 ```
 
-Backend показывает эвристики:
+OpenRouter usage accounting включен через `{"usage":{"include":true}}`. Hidden reasoning исключается из ответа через `{"reasoning":{"exclude":true}}`, но учитывается в usage tokens.
 
-- точность: соблюдение ограничений prompt;
-- креативность: интерпретация по выбранной температуре;
-- разнообразие: отличие текста от двух других ответов.
+Backend показывает:
+
+- качество: эвристика соблюдения prompt;
+- скорость: `duration_ms` вокруг `httpx.post`;
+- tokens: `prompt_tokens`, `completion_tokens`, `total_tokens`;
+- reasoning/cache: `reasoning_tokens`, `cached_tokens`;
+- стоимость: `usage.cost` из OpenRouter или оценка по tokens и цене модели;
+- детали стоимости: `cost_details`, price per 1M input/output tokens;
+- ресурсы модели: total/active params, architecture, context window;
+- ссылки на OpenRouter и Hugging Face.
 
 ## Запуск
 
@@ -81,14 +88,14 @@ ipconfig getifaddr en0
 http://<IP_ноутбука>:5000
 ```
 
-4. Для видео: нажмите «Сравнить 0 / 0.7 / 1.2» и покажите три ответа с выводами.
+4. Для видео: нажмите «Сравнить weak / medium / strong» и покажите три ответа с выводами.
 
 ## Переменные окружения
 
 | Переменная | Описание |
 | --- | --- |
 | `OPENROUTER_API_KEY` | Обязательный API-ключ OpenRouter |
-| `OPENROUTER_MODEL` | Модель, default `inclusionai/ling-2.6-flash` |
+| `OPENROUTER_MODEL` | Модель для custom/single run fallback, default `z-ai/glm-4.7-flash` |
 | `HOST` | Host Flask, default `0.0.0.0` |
 | `PORT` | Port Flask, default `5000` |
 

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 
 import httpx
 
@@ -8,8 +9,10 @@ from http_log import log_exchange
 logger = logging.getLogger("llm_demo")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "inclusionai/ling-2.6-flash"
-TIMEOUT_SECONDS = 60.0
+DEFAULT_MODEL = "z-ai/glm-4.7-flash"
+TIMEOUT_SECONDS = 180.0
+REASONING_EXCLUDED = {"exclude": True}
+REASONING_ENABLED = {"enabled": True, "exclude": False}
 
 
 class OpenRouterError(Exception):
@@ -20,9 +23,9 @@ class OpenRouterError(Exception):
 
 def chat_completion(
     messages,
-    temperature=0.7,
-    top_p=1.0,
-    top_k=40,
+    temperature=None,
+    top_p=None,
+    top_k=None,
     model=None,
     max_tokens=None,
     stop=None,
@@ -39,11 +42,16 @@ def chat_completion(
     body = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
-        "top_p": top_p,
+        "usage": {"include": True},
     }
 
-    if top_k != 0:
+    if temperature is not None:
+        body["temperature"] = temperature
+
+    if top_p is not None:
+        body["top_p"] = top_p
+
+    if top_k not in (None, 0):
         body["top_k"] = top_k
 
     if max_tokens is not None:
@@ -58,11 +66,10 @@ def chat_completion(
     if provider:
         body["provider"] = provider
 
-    if include_reasoning:
-        body["include_reasoning"] = True
-
     if reasoning:
         body["reasoning"] = reasoning
+    elif include_reasoning:
+        body["reasoning"] = REASONING_ENABLED
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -79,6 +86,7 @@ def chat_completion(
         body=body,
     )
 
+    started = time.perf_counter()
     try:
         response = httpx.post(
             OPENROUTER_URL,
@@ -90,6 +98,7 @@ def chat_completion(
         raise OpenRouterError("OpenRouter request timed out", 504)
     except httpx.HTTPError as exc:
         raise OpenRouterError(f"OpenRouter request failed: {exc}", 502)
+    duration_ms = round((time.perf_counter() - started) * 1000)
 
     try:
         response_data = response.json()
@@ -120,12 +129,22 @@ def chat_completion(
         message = choice["message"]
         usage = data.get("usage") or {}
         completion_details = usage.get("completion_tokens_details") or {}
+        prompt_details = usage.get("prompt_tokens_details") or {}
         return {
+            "id": data.get("id"),
+            "model": data.get("model") or model,
             "content": message.get("content"),
             "reasoning": message.get("reasoning") or message.get("reasoning_content"),
             "finish_reason": choice.get("finish_reason"),
+            "native_finish_reason": choice.get("native_finish_reason"),
+            "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
             "reasoning_tokens": usage.get("reasoning_tokens") or completion_details.get("reasoning_tokens"),
+            "cached_tokens": prompt_details.get("cached_tokens"),
+            "cost": usage.get("cost"),
+            "cost_details": usage.get("cost_details"),
+            "duration_ms": duration_ms,
         }
     except (KeyError, IndexError, TypeError, ValueError):
         raise OpenRouterError("OpenRouter response did not contain choices[0].message.content", 502)
