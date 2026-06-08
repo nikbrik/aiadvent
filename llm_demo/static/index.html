@@ -3,394 +3,286 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>LLM model versions demo</title>
+    <title>AI Advent Day 6 Agent</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 5</p>
-        <h1>Версии моделей</h1>
+        <p class="eyebrow">AI Advent · День 6</p>
+        <h1>Первый агент</h1>
         <p class="lead">
-          Один prompt отправляется в OpenRouter на три разные китайские модели: Qwen, Z.ai и DeepSeek.
+          Чат-агент помнит прошлые диалоги, факты о пользователе, выводы и стиль общения.
         </p>
       </section>
 
-      <section class="panel">
-        <form id="chat-form">
-          <div class="top-row">
+      <section class="workspace">
+        <section class="panel chat-panel">
+          <div class="panel-head">
+            <h2>Чат</h2>
+            <span id="status" class="status">Готово</span>
+          </div>
+
+          <div id="messages" class="messages" aria-live="polite"></div>
+
+          <form id="chat-form" class="composer">
             <label class="field">
-              <span>Prompt</span>
-              <textarea id="prompt" name="prompt" rows="8" required>Ты CTO интернет-магазина и выбираешь LLM для трех задач: 1) быстрые FAQ-ответы клиентам, где важны скорость и низкая цена; 2) анализ 40-страничного договора поставки, где важны качество и длинный контекст; 3) поиск ошибки в SQL-запросе, где важны точность и объяснение риска. Составь markdown-таблицу с колонками: Задача, Выбор модели (weak/medium/strong), Почему, Риск. После таблицы добавь короткий вывод из 2 предложений. Обязательно сравни качество, скорость, стоимость и ресурсоемкость. Не выдумывай внешние факты.</textarea>
+              <span>Сообщение</span>
+              <textarea id="message" rows="4" required placeholder="Напишите агенту..."></textarea>
             </label>
+            <div class="actions">
+              <button id="send-button" class="primary-button" type="submit">Отправить</button>
+              <button id="demo-button" class="demo-button" type="button">Тестовый сценарий 0/25</button>
+              <button id="new-button" class="secondary-button" type="button">Новый чат</button>
+              <button id="clear-button" class="danger-button" type="button">Очистить память</button>
+            </div>
+          </form>
 
-            <aside class="reference">
-              <span class="reference-title">Фиксировано</span>
-              <p><strong>prompt:</strong> один и тот же</p>
-              <p><strong>model:</strong> weak · medium · strong</p>
-              <p><strong>usage:</strong> include=true</p>
-              <p><strong>reasoning:</strong> exclude=true</p>
-              <p class="muted">Provider routing: allow_fallbacks=false.</p>
-            </aside>
+          <div id="metadata" class="metadata">Метаданные появятся после ответа.</div>
+        </section>
+
+        <aside class="panel memory-panel">
+          <div class="panel-head">
+            <h2>Память</h2>
           </div>
 
-          <div class="config-grid">
-            <label class="field model-field">
-              <span>Одиночный запуск</span>
-              <select id="model" name="model">
-                <option value="qwen/qwen3-8b" selected>Weak · Qwen3 8B</option>
-                <option value="z-ai/glm-4.7-flash">Medium · Z.ai GLM 4.7 Flash</option>
-                <option value="deepseek/deepseek-v4-pro">Strong · DeepSeek V4 Pro</option>
-              </select>
-            </label>
-          </div>
+          <section class="memory-section">
+            <h3>Стиль</h3>
+            <p id="style-memory" class="memory-text">Пока нет данных.</p>
+          </section>
 
-          <div class="method-note" id="method-note"></div>
+          <section class="memory-section">
+            <h3>Факты</h3>
+            <ul id="facts-memory" class="memory-list"></ul>
+          </section>
 
-          <div class="form-actions">
-            <button id="submit-button" class="submit-button" type="submit">Запустить выбранную</button>
-            <button id="compare-button" class="secondary-button" type="button">Сравнить weak / medium / strong</button>
-          </div>
-        </form>
-      </section>
+          <section class="memory-section">
+            <h3>Выводы</h3>
+            <ul id="inferences-memory" class="memory-list"></ul>
+          </section>
 
-      <section class="panel response-card">
-        <div class="response-head">
-          <h2>Один ответ</h2>
-          <span id="status" class="status">Готово</span>
-        </div>
-        <pre id="response">Ответ появится здесь.</pre>
-        <div id="response-meta" class="response-meta">Метаданные появятся после ответа.</div>
-      </section>
+          <section class="memory-section">
+            <h3>Текущий summary</h3>
+            <p id="current-summary" class="memory-text">Пока нет данных.</p>
+          </section>
 
-      <section id="compare-card" class="panel compare-card" hidden>
-        <div class="response-head">
-          <h2>Сравнение</h2>
-          <span id="compare-status" class="status">Готово</span>
-        </div>
-        <div id="compare-summary" class="compare-summary"></div>
-        <div id="compare-grid" class="compare-grid"></div>
+          <section class="memory-section">
+            <h3>Прошлые чаты</h3>
+            <ul id="archived-memory" class="memory-list"></ul>
+          </section>
+        </aside>
       </section>
     </main>
 
     <script>
-      const modelNotes = {
-        "qwen/qwen3-8b": "Weak: Alibaba Qwen, 8.2B dense, дешевый paid baseline, context 131K.",
-        "z-ai/glm-4.7-flash": "Medium: Z.ai/Zhipu, 30B-class MoE, заметно сильнее small baseline, context 203K.",
-        "deepseek/deepseek-v4-pro": "Strong: DeepSeek, 1.6T total / 49B active, длинный context 1M.",
-      };
-
       const form = document.querySelector("#chat-form");
-      const promptInput = document.querySelector("#prompt");
-      const modelInput = document.querySelector("#model");
-      const methodNote = document.querySelector("#method-note");
-      const responseBox = document.querySelector("#response");
-      const responseMeta = document.querySelector("#response-meta");
+      const messageInput = document.querySelector("#message");
+      const messagesBox = document.querySelector("#messages");
       const statusBox = document.querySelector("#status");
-      const submitButton = document.querySelector("#submit-button");
-      const compareButton = document.querySelector("#compare-button");
-      const compareCard = document.querySelector("#compare-card");
-      const compareGrid = document.querySelector("#compare-grid");
-      const compareSummary = document.querySelector("#compare-summary");
-      const compareStatus = document.querySelector("#compare-status");
-
-      function syncMethodNote() {
-        methodNote.textContent = modelNotes[modelInput.value] || modelInput.value;
-      }
-
-      modelInput.addEventListener("change", syncMethodNote);
-
-      function buildPayload(model) {
-        return {
-          prompt: promptInput.value,
-          model,
-        };
-      }
+      const metadataBox = document.querySelector("#metadata");
+      const sendButton = document.querySelector("#send-button");
+      const demoButton = document.querySelector("#demo-button");
+      const newButton = document.querySelector("#new-button");
+      const clearButton = document.querySelector("#clear-button");
+      const styleMemory = document.querySelector("#style-memory");
+      const factsMemory = document.querySelector("#facts-memory");
+      const inferencesMemory = document.querySelector("#inferences-memory");
+      const currentSummary = document.querySelector("#current-summary");
+      const archivedMemory = document.querySelector("#archived-memory");
+      let demoComplete = false;
 
       function setBusy(isBusy) {
-        submitButton.disabled = isBusy;
-        compareButton.disabled = isBusy;
-        modelInput.disabled = isBusy;
+        sendButton.disabled = isBusy;
+        demoButton.disabled = isBusy || demoComplete;
+        newButton.disabled = isBusy;
+        clearButton.disabled = isBusy;
+        messageInput.disabled = isBusy;
       }
 
-      function responseContent(data) {
-        if (data.content !== null && data.content !== undefined && data.content !== "") {
-          return data.content;
+      function setStatus(text, mode = "") {
+        statusBox.textContent = text;
+        statusBox.className = mode ? `status ${mode}` : "status";
+      }
+
+      function renderMessages(messages) {
+        if (!messages || messages.length === 0) {
+          messagesBox.innerHTML = '<p class="empty-state">Сообщений пока нет.</p>';
+          return;
         }
 
-        return "content=null: OpenRouter/model не вернул видимый текст.";
+        messagesBox.replaceChildren(...messages.map((message) => {
+          const item = document.createElement("article");
+          item.className = `message message-${message.role}`;
+
+          const role = document.createElement("strong");
+          role.textContent = message.role === "user" ? "Вы" : "Агент";
+
+          const content = document.createElement("p");
+          content.textContent = message.content;
+
+          item.append(role, content);
+          return item;
+        }));
+        messagesBox.scrollTop = messagesBox.scrollHeight;
       }
 
-      function evaluationText(evaluation) {
-        if (!evaluation) {
-          return "качество: недоступно";
+      function renderList(node, items, emptyText) {
+        const values = (items || []).filter(Boolean);
+        if (values.length === 0) {
+          node.innerHTML = `<li class="empty-list">${emptyText}</li>`;
+          return;
         }
-
-        return `${evaluation.score}/${evaluation.max_score}: ${evaluation.notes.join("; ")}`;
+        node.replaceChildren(...values.map((value) => {
+          const item = document.createElement("li");
+          item.textContent = value.summary || value;
+          return item;
+        }));
       }
 
-      function durationText(value) {
-        if (value === null || value === undefined) {
-          return "недоступно";
-        }
-
-        return `${Math.round(value)} ms`;
+      function renderMemory(data) {
+        const profile = data.profile || {};
+        styleMemory.textContent = profile.style || "Пока нет данных.";
+        currentSummary.textContent = data.current_chat_summary || "Пока нет данных.";
+        renderList(factsMemory, profile.facts, "Фактов пока нет.");
+        renderList(inferencesMemory, profile.inferences, "Выводов пока нет.");
+        renderList(archivedMemory, data.archived_chats, "Прошлых чатов пока нет.");
       }
 
-      function tokensText(data) {
-        const total = data.total_tokens ?? "n/a";
-        const prompt = data.prompt_tokens ?? "n/a";
-        const completion = data.completion_tokens ?? "n/a";
-        const reasoning = data.reasoning_tokens ?? "n/a";
-        const cached = data.cached_tokens ?? "n/a";
-        return `${total} total · ${prompt} prompt · ${completion} completion · ${reasoning} reasoning · ${cached} cached`;
+      function renderState(data) {
+        renderMessages(data.messages || []);
+        renderMemory(data);
+        renderDemoProgress(data);
       }
 
-      function costText(data) {
-        if (data.cost === null || data.cost === undefined) {
-          return "недоступно";
-        }
-
-        const suffix = data.cost_estimated ? " estimate" : "";
-        return `$${Number(data.cost).toFixed(6)}${suffix}`;
-      }
-
-      function priceText(data) {
-        if (!data.pricing || data.pricing.input === null || data.pricing.output === null) {
-          return "недоступно";
-        }
-
-        return `$${data.pricing.input}/M input · $${data.pricing.output}/M output`;
-      }
-
-      function costDetailsText(data) {
-        if (!data.cost_details) {
-          return "недоступно";
-        }
-
-        const details = data.cost_details;
-        const total = details.upstream_inference_cost ?? data.cost;
-        const prompt = details.upstream_inference_prompt_cost ?? "n/a";
-        const completion = details.upstream_inference_completions_cost ?? "n/a";
-        return `total ${total} · prompt ${prompt} · completion ${completion}`;
-      }
-
-      function modelSpecText(data) {
-        return `${data.parameters || data.scale || "unknown"} · active ${data.active_parameters || "unknown"} · ${data.architecture || "unknown"} · context ${data.context_window || "unknown"}`;
-      }
-
-      function reasoningText(data) {
-        if (!data.reasoning_policy) {
-          return "недоступно";
-        }
-
-        return Object.entries(data.reasoning_policy)
-          .map(([key, value]) => `${key}=${value}`)
-          .join(", ");
+      function renderDemoProgress(data) {
+        const progress = data.demo_progress ?? 0;
+        const total = data.demo_total ?? 25;
+        demoComplete = Boolean(data.demo_complete || progress >= total);
+        demoButton.textContent = demoComplete
+          ? `Сценарий завершён (${total}/${total})`
+          : `Тестовый сценарий ${progress}/${total}`;
+        demoButton.disabled = demoComplete;
       }
 
       function renderMetadata(data) {
-        const meta = [];
-
-        if (data.label) {
-          meta.push(data.label);
-        }
-
-        meta.push(`model: ${modelSpecText(data)}`);
-        meta.push(`time: ${durationText(data.duration_ms)}`);
-        meta.push(`tokens: ${tokensText(data)}`);
-        meta.push(`cost: ${costText(data)}`);
-        meta.push(`pricing: ${priceText(data)}`);
-        meta.push(`reasoning: ${reasoningText(data)}`);
-
-        if (data.finish_reason) {
-          meta.push(`finish_reason: ${data.finish_reason}`);
-        }
-
-        if (data.reasoning_tokens !== null && data.reasoning_tokens !== undefined) {
-          meta.push(`reasoning_tokens: ${data.reasoning_tokens}`);
-        }
-
-        meta.push(`качество: ${evaluationText(data.evaluation)}`);
-        responseMeta.textContent = meta.join(" · ");
+        const meta = data.metadata || {};
+        const items = [];
+        if (meta.model) items.push(`model: ${meta.model}`);
+        if (meta.duration_ms !== null && meta.duration_ms !== undefined) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
+        if (meta.total_tokens !== null && meta.total_tokens !== undefined) items.push(`tokens: ${meta.total_tokens}`);
+        if (meta.cost !== null && meta.cost !== undefined) items.push(`cost: $${Number(meta.cost).toFixed(6)}`);
+        if (data.memory_update_error) items.push(`memory update warning: ${data.memory_update_error}`);
+        metadataBox.textContent = items.length ? items.join(" · ") : "Метаданные недоступны.";
       }
 
-      function createMetric(label, value) {
-        const item = document.createElement("li");
-        const strong = document.createElement("strong");
-        strong.textContent = `${label}: `;
-        item.append(strong, value);
-        return item;
-      }
-
-      function createLink(label, href) {
-        const link = document.createElement("a");
-        link.href = href;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        link.textContent = label;
-        return link;
-      }
-
-      function createLinkRow(result) {
-        const row = document.createElement("div");
-        row.className = "model-links";
-
-        if (result.links && result.links.openrouter) {
-          row.append(createLink("OpenRouter", result.links.openrouter));
+      async function loadState() {
+        setStatus("Загрузка...", "loading");
+        try {
+          const response = await fetch("/api/chat");
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Load failed");
+          renderState(data);
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
         }
-
-        if (result.links && result.links.hf) {
-          row.append(createLink("HF", result.links.hf));
-        }
-
-        return row;
-      }
-
-      function createCompareItem(result) {
-        const item = document.createElement("article");
-        item.className = `compare-item model-${result.tier || "custom"}`;
-
-        const head = document.createElement("div");
-        head.className = "compare-item-head";
-
-        const title = document.createElement("h3");
-        title.textContent = result.label || result.model;
-
-        const subline = document.createElement("p");
-        subline.className = "model-subline";
-        subline.textContent = `${result.lab || "unknown"} · ${modelSpecText(result)}`;
-
-        const badge = document.createElement("span");
-        badge.className = result.error ? "compare-badge error" : "compare-badge";
-        badge.textContent = result.error ? `HTTP ${result.status || "error"}` : evaluationText(result.evaluation);
-
-        head.append(title, subline, badge, createLinkRow(result));
-
-        const content = document.createElement("pre");
-        const hasNullContent = !result.error && (result.content === null || result.content === undefined || result.content === "");
-        content.className = result.error || hasNullContent ? "compare-output compare-output-error" : "compare-output compare-final";
-        content.textContent = result.error || responseContent(result);
-
-        const metrics = document.createElement("ul");
-        metrics.className = "metric-list";
-        metrics.append(
-          createMetric("Time", durationText(result.duration_ms)),
-          createMetric("Model", modelSpecText(result)),
-          createMetric("Tokens", tokensText(result)),
-          createMetric("Cost", costText(result)),
-          createMetric("Cost details", costDetailsText(result)),
-          createMetric("Pricing", priceText(result)),
-          createMetric("Reasoning", reasoningText(result)),
-          createMetric("Use", result.recommended_for || "недоступно"),
-        );
-
-        const meta = document.createElement("div");
-        meta.className = "response-meta";
-        const metaItems = [];
-        if (result.model) {
-          metaItems.push(`model: ${result.model}`);
-        }
-        if (result.id) {
-          metaItems.push(`id: ${result.id}`);
-        }
-        if (result.finish_reason) {
-          metaItems.push(`finish_reason: ${result.finish_reason}`);
-        }
-        if (result.character_count) {
-          metaItems.push(`${result.character_count} символов`);
-        }
-        meta.textContent = metaItems.length ? metaItems.join(" · ") : "Метаданные отсутствуют.";
-
-        item.append(head, content, metrics, meta);
-        return item;
-      }
-
-      function renderCompareResults(results) {
-        compareGrid.replaceChildren(...results.map(createCompareItem));
       }
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-
-        const payload = buildPayload(modelInput.value);
-
-        setBusy(true);
-        statusBox.textContent = "Запрос...";
-        statusBox.className = "status loading";
-        responseBox.textContent = "Ждем ответ OpenRouter...";
-        responseMeta.textContent = "Метаданные появятся после ответа.";
-
-        try {
-          const result = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-
-          const data = await result.json();
-
-          if (!result.ok) {
-            throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
-          }
-
-          responseBox.textContent = responseContent(data);
-          renderMetadata(data);
-          statusBox.textContent = "Готово";
-          statusBox.className = "status";
-        } catch (error) {
-          responseBox.textContent = error.message;
-          responseMeta.textContent = "Метаданные недоступны.";
-          statusBox.textContent = "Ошибка";
-          statusBox.className = "status error";
-        } finally {
-          setBusy(false);
-        }
-      });
-
-      compareButton.addEventListener("click", async () => {
-        if (!promptInput.value.trim()) {
+        const message = messageInput.value.trim();
+        if (!message) {
           form.reportValidity();
-          promptInput.focus();
           return;
         }
 
-        const payload = buildPayload(modelInput.value);
-
         setBusy(true);
-        compareCard.hidden = false;
-        compareStatus.textContent = "Запрос...";
-        compareStatus.className = "status loading";
-        compareSummary.textContent = "Запускаем три запроса с одинаковым prompt.";
-        compareGrid.textContent = "";
+        setStatus("Запрос...", "loading");
+        metadataBox.textContent = "Ждем ответ OpenRouter и обновление памяти...";
 
         try {
-          const result = await fetch("/api/compare", {
+          const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ message }),
           });
-
-          const data = await result.json();
-
-          if (!result.ok) {
-            throw new Error(`${data.status || result.status}: ${data.error || "Unknown error"}`);
-          }
-
-          compareSummary.textContent = data.summary || "Сравнение завершено.";
-          renderCompareResults(data.results || []);
-          compareStatus.textContent = "Готово";
-          compareStatus.className = "status";
+          const data = await response.json();
+          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Unknown error"}`);
+          messageInput.value = "";
+          renderState(data);
+          renderMetadata(data);
+          setStatus("Готово");
         } catch (error) {
-          compareSummary.textContent = error.message;
-          compareStatus.textContent = "Ошибка";
-          compareStatus.className = "status error";
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+          messageInput.focus();
+        }
+      });
+
+      newButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("Архивация...", "loading");
+        try {
+          const response = await fetch("/api/chat/new", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "New chat failed");
+          renderState(data);
+          metadataBox.textContent = "Текущий чат архивирован.";
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
         } finally {
           setBusy(false);
         }
       });
 
-      syncMethodNote();
+      demoButton.addEventListener("click", async () => {
+        if (demoComplete) {
+          return;
+        }
+
+        setBusy(true);
+        setStatus("Сценарий...", "loading");
+        metadataBox.textContent = "Отправляем следующее тестовое сообщение...";
+
+        try {
+          const response = await fetch("/api/demo/next", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Demo step failed"}`);
+          renderState(data);
+          renderMetadata(data);
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      clearButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("Очистка...", "loading");
+        try {
+          const response = await fetch("/api/chat", { method: "DELETE" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Clear failed");
+          renderState(data);
+          metadataBox.textContent = "Память этого клиента очищена.";
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      loadState();
     </script>
   </body>
 </html>

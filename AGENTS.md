@@ -12,11 +12,13 @@ Canonical documentation:
 - `docs/specs/assignment-3-reasoning-modes.md` - reasoning-mode assignment spec.
 - `docs/specs/assignment-4-temperature.md` - temperature comparison assignment spec.
 - `docs/specs/assignment-5-model-versions.md` - model-version comparison assignment spec.
+- `docs/specs/assignment-6-first-agent.md` - first-agent and long-term-memory assignment spec.
 - `docs/specs/submission-snapshot-policy.md` - snapshot submission policy.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
 - `docs/agent-notes/llm-demo-assignment-3.md` - Day 3 implementation decisions and checks.
 - `docs/agent-notes/llm-demo-assignment-4.md` - Day 4 implementation decisions and checks.
 - `docs/agent-notes/llm-demo-assignment-5.md` - Day 5 implementation decisions and checks.
+- `docs/agent-notes/llm-demo-assignment-6.md` - Day 6 implementation decisions and checks.
 
 Tool-specific files stay thin. Do not duplicate long specs in `.cursor/rules`, `.agents`, or assistant-specific dirs; link docs above.
 
@@ -54,6 +56,7 @@ Assignment-specific rules apply only when actively working on that assignment:
 - Day 3 reasoning-mode rules live in `docs/specs/assignment-3-reasoning-modes.md` and `docs/agent-notes/llm-demo-assignment-3.md`.
 - Day 4 temperature comparison rules live in `docs/specs/assignment-4-temperature.md` and `docs/agent-notes/llm-demo-assignment-4.md`.
 - Day 5 model-version rules live in `docs/specs/assignment-5-model-versions.md` and `docs/agent-notes/llm-demo-assignment-5.md`.
+- Day 6 first-agent rules live in `docs/specs/assignment-6-first-agent.md` and `docs/agent-notes/llm-demo-assignment-6.md`.
 
 Before changing assignment-specific behavior, read the matching spec and agent notes.
 
@@ -62,7 +65,7 @@ Before changing assignment-specific behavior, read the matching spec and agent n
 Run syntax checks:
 
 ```bash
-PYTHONPYCACHEPREFIX=/private/tmp/aiadvent-pycache python3 -m py_compile llm_demo/server.py llm_demo/llm_client.py
+python -m py_compile llm_demo/server.py llm_demo/llm_client.py llm_demo/agent.py
 ```
 
 Check whitespace in changed files:
@@ -78,4 +81,4 @@ cd llm_demo
 HOST=127.0.0.1 PORT=5050 ./.venv/bin/python server.py
 ```
 
-Run real OpenRouter comparisons only with user permission to spend key.
+Run real OpenRouter calls only with user permission to spend key.

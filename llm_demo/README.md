@@ -1,58 +1,47 @@
 # LLM REST Web Demo
 
-Учебное демо для AI Advent: браузер отправляет задачу и параметры генерации в Python backend, backend делает явный REST POST через `httpx` к OpenRouter.
+Учебное демо для AI Advent: браузер отправляет сообщение в Python backend, backend-агент делает явный REST POST через `httpx` к OpenRouter.
 
-Текущий снапшот реализует День 5: сравнение ответов разных китайских моделей.
+Текущий снапшот реализует День 6: первый агент с постоянной памятью.
 
 ## Что внутри
 
-- `server.py` - Flask routes `/`, `/api/chat` и `/api/compare`.
+- `server.py` - Flask routes `/`, `/api/chat`, `/api/chat/new`.
+- `agent.py` - `ChatAgent` и file-based memory store.
 - `llm_client.py` - низкоуровневый REST-запрос к OpenRouter через `httpx.post`.
-- `static/index.html` - vanilla HTML/JS UI.
+- `static/index.html` - vanilla HTML/JS chat UI.
 - `static/style.css` - адаптивные стили для desktop и Android Chrome.
 
-Спецификации и агентские заметки вынесены в `../docs/`:
+Спецификации и агентские заметки вынесены в `../docs/`.
 
-- `../docs/specs/assignment-1-rest-web-demo.md`
-- `../docs/specs/assignment-2-response-control.md`
-- `../docs/specs/assignment-3-reasoning-modes.md`
-- `../docs/specs/assignment-4-temperature.md`
-- `../docs/specs/assignment-5-model-versions.md`
-- `../docs/agent-notes/llm-demo-assignment-2.md`
-- `../docs/agent-notes/llm-demo-assignment-3.md`
-- `../docs/agent-notes/llm-demo-assignment-4.md`
-- `../docs/agent-notes/llm-demo-assignment-5.md`
+## День 6
 
-## День 5
+Backend ставит `client_id` cookie и хранит память в `data/clients/<client_id>.json`.
 
-UI сравнивает один prompt на трех моделях:
+Agent сохраняет:
 
-| Tier | Model | Lab | Scale |
-| --- | --- | --- | --- |
-| weak | `qwen/qwen3-8b` | Alibaba Qwen | 8.2B dense |
-| medium | `z-ai/glm-4.7-flash` | Z.ai / Zhipu | 30B-class MoE |
-| strong | `deepseek/deepseek-v4-pro` | DeepSeek | 1.6T total / 49B active |
+- текущие сообщения чата;
+- summary текущего чата;
+- summaries прошлых чатов;
+- факты о пользователе;
+- выводы/persona notes о пользователе;
+- preferred communication style.
 
-Backend делает три OpenRouter вызова с одинаковым `prompt`. Generation parameters не задаются: без `temperature`, `top_p`, `top_k`, `max_tokens`, `stop` и `response_format`.
+Перед основным OpenRouter call agent вставляет память в system prompt. После ответа agent делает второй LLM call, чтобы обновить facts, inferences, style и current summary. Если memory-update JSON сломан, видимый ответ все равно возвращается.
 
-Provider routing отправляется без fallback:
+Все agent calls используют OpenRouter model `deepseek/deepseek-v4-flash`.
 
-```json
-{"allow_fallbacks": false}
-```
+Жёлтая кнопка `Тестовый сценарий` пошагово отправляет 25 scripted messages от вымышленного Android-разработчика Аркадия Чернова. Сценарий автоматически разбивает сообщения на пять чатов и показывает, как память переносится между темами.
 
-OpenRouter usage accounting включен через `{"usage":{"include":true}}`. Hidden reasoning исключается из ответа через `{"reasoning":{"exclude":true}}`, но учитывается в usage tokens.
+## API
 
-Backend показывает:
-
-- качество: эвристика соблюдения prompt;
-- скорость: `duration_ms` вокруг `httpx.post`;
-- tokens: `prompt_tokens`, `completion_tokens`, `total_tokens`;
-- reasoning/cache: `reasoning_tokens`, `cached_tokens`;
-- стоимость: `usage.cost` из OpenRouter или оценка по tokens и цене модели;
-- детали стоимости: `cost_details`, price per 1M input/output tokens;
-- ресурсы модели: total/active params, architecture, context window;
-- ссылки на OpenRouter и Hugging Face.
+| Method | Path | Описание |
+| --- | --- | --- |
+| `GET` | `/api/chat` | Вернуть текущий чат и память клиента |
+| `POST` | `/api/chat` | Принять `{ "message": "..." }`, вернуть ответ агента |
+| `POST` | `/api/chat/new` | Архивировать текущий чат и начать новый |
+| `DELETE` | `/api/chat` | Очистить память текущего клиента |
+| `POST` | `/api/demo/next` | Отправить следующий scripted demo message |
 
 ## Запуск
 
@@ -67,45 +56,28 @@ python server.py
 
 По умолчанию сервер слушает `0.0.0.0:5000`.
 
-Откройте на ноутбуке:
+Откройте:
 
 ```text
 http://localhost:5000
 ```
-
-## Доступ с Android
-
-1. Подключите Mac и телефон к одной Wi-Fi сети.
-2. Узнайте IP Mac:
-
-```bash
-ipconfig getifaddr en0
-```
-
-3. Откройте в Chrome на телефоне:
-
-```text
-http://<IP_ноутбука>:5000
-```
-
-4. Для видео: нажмите «Сравнить weak / medium / strong» и покажите три ответа с выводами.
 
 ## Переменные окружения
 
 | Переменная | Описание |
 | --- | --- |
 | `OPENROUTER_API_KEY` | Обязательный API-ключ OpenRouter |
-| `OPENROUTER_MODEL` | Модель для custom/single run fallback, default `z-ai/glm-4.7-flash` |
+| `OPENROUTER_MODEL` | Модель OpenRouter, default `z-ai/glm-4.7-flash` |
 | `HOST` | Host Flask, default `0.0.0.0` |
 | `PORT` | Port Flask, default `5000` |
 
-## Ошибки
+## Checks
 
-- `OPENROUTER_API_KEY is not set` - экспортируйте ключ перед запуском.
-- `OpenRouter returned HTTP 401` - проверьте ключ.
-- `OpenRouter returned HTTP 402` - проверьте баланс OpenRouter.
-- Телефон не открывает страницу - проверьте Wi-Fi сеть, firewall macOS и что сервер запущен на `0.0.0.0`.
+```bash
+python -m py_compile server.py llm_client.py agent.py
+git diff --check
+```
 
 ## Ограничения
 
-В демо нет auth, rate limit, истории сообщений, streaming и native Android app. API-ключ хранится только на backend и не передается в frontend.
+В демо нет auth, rate limit, streaming и native Android app. API-ключ хранится только на backend и не передается в frontend.

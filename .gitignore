@@ -1,6 +1,7 @@
 .env
 .venv/
 .ast-index/
+llm_demo/data/
 __pycache__/
 *.py[cod]
 .DS_Store
