@@ -140,6 +140,20 @@ def new_chat():
     return jsonify(with_demo_metadata(agent.start_new_chat(g.client_id)))
 
 
+@app.post("/api/chat/resume")
+def resume_chat():
+    if not request.is_json:
+        return error_response("Request body must be application/json", 400)
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = agent.resume_chat(g.client_id, payload.get("chat_id", ""))
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+
+    return jsonify(with_demo_metadata(result))
+
+
 @app.delete("/api/chat")
 def clear_chat():
     return jsonify(with_demo_metadata(agent.clear(g.client_id)))

@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AI Advent Day 6 Agent</title>
+    <title>AI Advent Day 7 Context</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 6</p>
-        <h1>Первый агент</h1>
+        <p class="eyebrow">AI Advent · День 7</p>
+        <h1>Сохранение контекста</h1>
         <p class="lead">
-          Чат-агент помнит прошлые диалоги, факты о пользователе, выводы и стиль общения.
+          Чат-агент сохраняет messages в JSON и восстанавливает диалог после перезапуска.
         </p>
       </section>
 
@@ -97,6 +97,9 @@
         newButton.disabled = isBusy;
         clearButton.disabled = isBusy;
         messageInput.disabled = isBusy;
+        archivedMemory.querySelectorAll("button").forEach((button) => {
+          button.disabled = isBusy;
+        });
       }
 
       function setStatus(text, mode = "") {
@@ -145,7 +148,42 @@
         currentSummary.textContent = data.current_chat_summary || "Пока нет данных.";
         renderList(factsMemory, profile.facts, "Фактов пока нет.");
         renderList(inferencesMemory, profile.inferences, "Выводов пока нет.");
-        renderList(archivedMemory, data.archived_chats, "Прошлых чатов пока нет.");
+        renderArchivedChats(data.archived_chats || []);
+      }
+
+      function renderArchivedChats(chats) {
+        const values = chats.filter(Boolean);
+        if (values.length === 0) {
+          archivedMemory.innerHTML = '<li class="empty-list">Прошлых чатов пока нет.</li>';
+          return;
+        }
+
+        archivedMemory.replaceChildren(...values.map((chat) => {
+          const item = document.createElement("li");
+          item.className = "archived-chat";
+
+          const summary = document.createElement("span");
+          summary.className = "archived-summary";
+          summary.textContent = chat.summary || "Чат без summary.";
+
+          const meta = document.createElement("span");
+          meta.className = "archived-meta";
+          const count = chat.messages ? chat.messages.length : chat.message_count || 0;
+          meta.textContent = count ? `${count} сообщений` : "только summary";
+
+          item.append(summary, meta);
+
+          if (chat.id && count > 0) {
+            const button = document.createElement("button");
+            button.className = "chat-switch-button";
+            button.type = "button";
+            button.dataset.chatId = chat.id;
+            button.textContent = "Вернуться";
+            item.append(button);
+          }
+
+          return item;
+        }));
       }
 
       function renderState(data) {
@@ -231,6 +269,33 @@
           if (!response.ok) throw new Error(data.error || "New chat failed");
           renderState(data);
           metadataBox.textContent = "Текущий чат архивирован.";
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      archivedMemory.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-chat-id]");
+        if (!button) {
+          return;
+        }
+
+        setBusy(true);
+        setStatus("Возврат...", "loading");
+        try {
+          const response = await fetch("/api/chat/resume", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: button.dataset.chatId }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Resume chat failed");
+          renderState(data);
+          metadataBox.textContent = "Старый чат восстановлен. Можно продолжать диалог.";
           setStatus("Готово");
         } catch (error) {
           setStatus("Ошибка", "error");

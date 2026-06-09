@@ -293,6 +293,33 @@ textarea:disabled {
   padding-left: 18px;
 }
 
+.archived-chat {
+  display: grid;
+  gap: 6px;
+}
+
+.archived-summary,
+.archived-meta {
+  overflow-wrap: anywhere;
+}
+
+.archived-meta {
+  color: var(--muted);
+  font: 750 0.78rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.chat-switch-button {
+  justify-self: start;
+  min-height: 34px;
+  border: 1px solid rgba(37, 99, 235, 0.32);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--accent-dark);
+  background: #eef4ff;
+  font: 800 0.78rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  cursor: pointer;
+}
+
 .empty-list {
   color: var(--muted);
 }

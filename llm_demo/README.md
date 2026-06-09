@@ -2,7 +2,7 @@
 
 Учебное демо для AI Advent: браузер отправляет сообщение в Python backend, backend-агент делает явный REST POST через `httpx` к OpenRouter.
 
-Текущий снапшот реализует День 6: первый агент с постоянной памятью.
+Текущий снапшот реализует День 7: агент сохраняет контекст и восстанавливает диалог после перезапуска.
 
 ## Что внутри
 
@@ -14,7 +14,7 @@
 
 Спецификации и агентские заметки вынесены в `../docs/`.
 
-## День 6
+## День 7
 
 Backend ставит `client_id` cookie и хранит память в `data/clients/<client_id>.json`.
 
@@ -23,9 +23,14 @@ Agent сохраняет:
 - текущие сообщения чата;
 - summary текущего чата;
 - summaries прошлых чатов;
+- messages прошлых чатов для ручного возврата к ним;
 - факты о пользователе;
 - выводы/persona notes о пользователе;
 - preferred communication style.
+
+При каждом запросе agent заново загружает JSON с диска. Поэтому после перезапуска Flask тот же браузер с тем же `client_id` cookie видит старые `messages`, а следующий OpenRouter call получает их в prompt.
+
+Если пользователь возвращается к старому чату, выбранный архив становится `current_chat`, и его `messages` снова попадают в prompt. Остальные архивы остаются только summary-контекстом; полные transcripts других чатов в prompt не добавляются.
 
 Перед основным OpenRouter call agent вставляет память в system prompt. После ответа agent делает второй LLM call, чтобы обновить facts, inferences, style и current summary. Если memory-update JSON сломан, видимый ответ все равно возвращается.
 
@@ -40,6 +45,7 @@ Agent сохраняет:
 | `GET` | `/api/chat` | Вернуть текущий чат и память клиента |
 | `POST` | `/api/chat` | Принять `{ "message": "..." }`, вернуть ответ агента |
 | `POST` | `/api/chat/new` | Архивировать текущий чат и начать новый |
+| `POST` | `/api/chat/resume` | Принять `{ "chat_id": "..." }`, восстановить архивный чат как текущий |
 | `DELETE` | `/api/chat` | Очистить память текущего клиента |
 | `POST` | `/api/demo/next` | Отправить следующий scripted demo message |
 
@@ -75,6 +81,7 @@ http://localhost:5000
 
 ```bash
 python -m py_compile server.py llm_client.py agent.py
+python -m unittest test_agent_persistence
 git diff --check
 ```
 

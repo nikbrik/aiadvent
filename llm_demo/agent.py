@@ -2,6 +2,7 @@ import json
 import os
 import re
 import tempfile
+import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,10 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def new_chat_id():
+    return str(uuid.uuid4())
+
+
 def default_memory():
     return {
         "version": 1,
@@ -32,6 +37,7 @@ def default_memory():
             "inferences": [],
         },
         "current_chat": {
+            "id": new_chat_id(),
             "started_at": utc_now(),
             "summary": "",
             "messages": [],
@@ -55,8 +61,11 @@ class FileMemoryStore:
         if not path.exists():
             return default_memory()
 
-        with path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return default_memory()
 
         return normalize_memory(data)
 
@@ -107,6 +116,32 @@ class ChatAgent:
     def start_new_chat(self, client_id):
         memory = self.memory_store.load(client_id)
         archive_current_chat(memory)
+        self.memory_store.save(client_id, memory)
+        return public_memory(memory)
+
+    def resume_chat(self, client_id, chat_id):
+        memory = self.memory_store.load(client_id)
+        chat_id = str(chat_id or "").strip()
+        archived = memory.get("archived_chats", [])
+        index = next(
+            (
+                position
+                for position, chat in enumerate(archived)
+                if chat.get("id") == chat_id and chat.get("messages")
+            ),
+            None,
+        )
+        if index is None:
+            raise ValueError("archived chat was not found")
+
+        restored = archived.pop(index)
+        archive_current_chat(memory)
+        memory["current_chat"] = {
+            "id": restored.get("id") or new_chat_id(),
+            "started_at": restored.get("started_at") or utc_now(),
+            "summary": restored.get("summary", ""),
+            "messages": clean_messages(restored.get("messages")),
+        }
         self.memory_store.save(client_id, memory)
         return public_memory(memory)
 
@@ -192,6 +227,7 @@ def normalize_memory(data):
 
     current = memory.get("current_chat") if isinstance(memory.get("current_chat"), dict) else {}
     memory["current_chat"] = {
+        "id": str(current.get("id") or new_chat_id()),
         "started_at": str(current.get("started_at") or utc_now()),
         "summary": str(current.get("summary") or ""),
         "messages": clean_messages(current.get("messages")),
@@ -200,15 +236,7 @@ def normalize_memory(data):
     archived = memory.get("archived_chats")
     if not isinstance(archived, list):
         archived = []
-    memory["archived_chats"] = [
-        {
-            "started_at": str(item.get("started_at") or ""),
-            "ended_at": str(item.get("ended_at") or ""),
-            "summary": str(item.get("summary") or "")[:MAX_SUMMARY_CHARS],
-        }
-        for item in archived
-        if isinstance(item, dict) and str(item.get("summary") or "").strip()
-    ]
+    memory["archived_chats"] = normalize_archived_chats(archived)
     return memory
 
 
@@ -217,9 +245,23 @@ def public_memory(memory):
         "profile": deepcopy(memory.get("profile", {})),
         "messages": deepcopy(memory.get("current_chat", {}).get("messages", [])),
         "current_chat_summary": memory.get("current_chat", {}).get("summary", ""),
-        "archived_chats": deepcopy(memory.get("archived_chats", [])),
+        "archived_chats": public_archived_chats(memory.get("archived_chats", [])),
         "demo_progress": normalize_progress(memory.get("demo_progress", 0)),
     }
+
+
+def public_archived_chats(chats):
+    return [
+        {
+            "id": chat.get("id", ""),
+            "started_at": chat.get("started_at", ""),
+            "ended_at": chat.get("ended_at", ""),
+            "summary": chat.get("summary", ""),
+            "message_count": len(chat.get("messages") or []),
+        }
+        for chat in chats
+        if isinstance(chat, dict)
+    ]
 
 
 def build_llm_messages(memory, user_message):
@@ -293,12 +335,15 @@ def archive_current_chat(memory):
         if not summary:
             summary = fallback_summary(messages)
         memory["archived_chats"].append({
+            "id": current.get("id") or new_chat_id(),
             "started_at": current.get("started_at") or utc_now(),
             "ended_at": utc_now(),
             "summary": summary[:MAX_SUMMARY_CHARS],
+            "messages": clean_messages(messages),
         })
 
     memory["current_chat"] = {
+        "id": new_chat_id(),
         "started_at": utc_now(),
         "summary": "",
         "messages": [],
@@ -332,6 +377,27 @@ def clean_messages(value):
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
     return messages[-MAX_CURRENT_MESSAGES:]
+
+
+def normalize_archived_chats(value):
+    chats = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary") or "").strip()[:MAX_SUMMARY_CHARS]
+        messages = clean_messages(item.get("messages"))
+        if not summary and not messages:
+            continue
+        if not summary:
+            summary = fallback_summary(messages)
+        chats.append({
+            "id": str(item.get("id") or f"legacy-{index + 1}"),
+            "started_at": str(item.get("started_at") or ""),
+            "ended_at": str(item.get("ended_at") or ""),
+            "summary": summary,
+            "messages": messages,
+        })
+    return chats
 
 
 def normalize_progress(value):

@@ -13,12 +13,14 @@ Canonical documentation:
 - `docs/specs/assignment-4-temperature.md` - temperature comparison assignment spec.
 - `docs/specs/assignment-5-model-versions.md` - model-version comparison assignment spec.
 - `docs/specs/assignment-6-first-agent.md` - first-agent and long-term-memory assignment spec.
+- `docs/specs/assignment-7-context-persistence.md` - context persistence assignment spec.
 - `docs/specs/submission-snapshot-policy.md` - snapshot submission policy.
 - `docs/agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider notes, debugging workflow, and guardrails.
 - `docs/agent-notes/llm-demo-assignment-3.md` - Day 3 implementation decisions and checks.
 - `docs/agent-notes/llm-demo-assignment-4.md` - Day 4 implementation decisions and checks.
 - `docs/agent-notes/llm-demo-assignment-5.md` - Day 5 implementation decisions and checks.
 - `docs/agent-notes/llm-demo-assignment-6.md` - Day 6 implementation decisions and checks.
+- `docs/agent-notes/llm-demo-assignment-7.md` - Day 7 implementation decisions and checks.
 
 Tool-specific files stay thin. Do not duplicate long specs in `.cursor/rules`, `.agents`, or assistant-specific dirs; link docs above.
 
@@ -57,6 +59,7 @@ Assignment-specific rules apply only when actively working on that assignment:
 - Day 4 temperature comparison rules live in `docs/specs/assignment-4-temperature.md` and `docs/agent-notes/llm-demo-assignment-4.md`.
 - Day 5 model-version rules live in `docs/specs/assignment-5-model-versions.md` and `docs/agent-notes/llm-demo-assignment-5.md`.
 - Day 6 first-agent rules live in `docs/specs/assignment-6-first-agent.md` and `docs/agent-notes/llm-demo-assignment-6.md`.
+- Day 7 context-persistence rules live in `docs/specs/assignment-7-context-persistence.md` and `docs/agent-notes/llm-demo-assignment-7.md`.
 
 Before changing assignment-specific behavior, read the matching spec and agent notes.
 
