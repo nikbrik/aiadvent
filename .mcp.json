@@ -4,12 +4,10 @@
       "type": "stdio",
       "command": "node",
       "args": [
-        "D:\\aiadvent\\.ast-index\\bin\\ast-index-mcp.js"
+        "scripts/ast-index-mcp.js"
       ],
       "env": {
-        "AST_INDEX_ROOT": "D:\\aiadvent",
-        "AST_INDEX_BIN": "D:\\aiadvent\\.ast-index\\bin\\ast-index.exe",
-        "AST_INDEX_DB_PATH": "D:\\aiadvent\\.ast-index\\index.db"
+        "AST_INDEX_DB_PATH": ".ast-index/index.db"
       }
     }
   }
