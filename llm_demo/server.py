@@ -6,7 +6,6 @@ import uuid
 from flask import Flask, g, jsonify, request, send_from_directory
 
 from agent import ChatAgent, FileMemoryStore
-from demo_script import DEMO_MESSAGES, DEMO_NEW_CHAT_STEPS, DEMO_TOTAL
 from http_log import log_exchange
 from llm_client import OpenRouterError, chat_completion
 
@@ -116,7 +115,7 @@ def index():
 
 @app.get("/api/chat")
 def chat_state():
-    return jsonify(with_demo_metadata(agent.snapshot(g.client_id)))
+    return jsonify(agent.snapshot(g.client_id))
 
 
 @app.post("/api/chat")
@@ -132,63 +131,38 @@ def chat():
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
 
-    return jsonify(with_demo_metadata(result))
-
-
-@app.post("/api/chat/new")
-def new_chat():
-    return jsonify(with_demo_metadata(agent.start_new_chat(g.client_id)))
-
-
-@app.post("/api/chat/resume")
-def resume_chat():
-    if not request.is_json:
-        return error_response("Request body must be application/json", 400)
-
-    payload = request.get_json(silent=True) or {}
-    try:
-        result = agent.resume_chat(g.client_id, payload.get("chat_id", ""))
-    except ValueError as exc:
-        return error_response(str(exc), 400)
-
-    return jsonify(with_demo_metadata(result))
+    if result.get("overflow"):
+        return jsonify(result), 413
+    return jsonify(result)
 
 
 @app.delete("/api/chat")
 def clear_chat():
-    return jsonify(with_demo_metadata(agent.clear(g.client_id)))
+    return jsonify(agent.clear(g.client_id))
 
 
-@app.post("/api/demo/next")
-def demo_next():
-    state = agent.snapshot(g.client_id)
-    progress = min(int(state.get("demo_progress", 0)), DEMO_TOTAL)
-    if progress >= DEMO_TOTAL:
-        return jsonify(with_demo_metadata(state, complete=True))
-
-    step_number = progress + 1
-    if step_number in DEMO_NEW_CHAT_STEPS:
-        agent.start_new_chat(g.client_id)
-
+@app.post("/api/demo/short")
+def demo_short():
     try:
-        result = agent.respond(g.client_id, DEMO_MESSAGES[progress])
-        agent.set_demo_progress(g.client_id, step_number)
+        result = agent.run_demo_short(g.client_id)
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
-
-    result["demo_step"] = step_number
-    result["demo_message"] = DEMO_MESSAGES[progress]
-    result["demo_progress"] = step_number
-    return jsonify(with_demo_metadata(result))
+    return jsonify(result)
 
 
-def with_demo_metadata(data, complete=None):
-    data = dict(data)
-    progress = min(int(data.get("demo_progress", 0)), DEMO_TOTAL)
-    data["demo_progress"] = progress
-    data["demo_total"] = DEMO_TOTAL
-    data["demo_complete"] = progress >= DEMO_TOTAL if complete is None else complete
-    return data
+@app.post("/api/demo/long")
+def demo_long():
+    try:
+        result = agent.run_demo_long(g.client_id)
+    except OpenRouterError as exc:
+        return error_response(str(exc), exc.status)
+    return jsonify(result)
+
+
+@app.post("/api/demo/overflow")
+def demo_overflow():
+    result = agent.run_demo_overflow(g.client_id)
+    return jsonify(result), 413
 
 
 def error_response(message, status):

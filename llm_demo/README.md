@@ -2,52 +2,47 @@
 
 Учебное демо для AI Advent: браузер отправляет сообщение в Python backend, backend-агент делает явный REST POST через `httpx` к OpenRouter.
 
-Текущий снапшот реализует День 7: агент сохраняет контекст и восстанавливает диалог после перезапуска.
+Текущий снапшот реализует День 8: token accounting, рост стоимости и preflight overflow.
 
 ## Что внутри
 
-- `server.py` - Flask routes `/`, `/api/chat`, `/api/chat/new`.
-- `agent.py` - `ChatAgent` и file-based memory store.
-- `llm_client.py` - низкоуровневый REST-запрос к OpenRouter через `httpx.post`.
-- `static/index.html` - vanilla HTML/JS chat UI.
-- `static/style.css` - адаптивные стили для desktop и Android Chrome.
+- `server.py` — Flask routes `/`, `/api/chat`, `/api/demo/*`.
+- `agent.py` — `ChatAgent` с per-turn token stats и cumulative totals.
+- `token_counter.py` — локальная оценка токенов без сети.
+- `llm_client.py` — REST-запрос к OpenRouter через `httpx.post`.
+- `static/index.html` — vanilla HTML/JS chat UI с token panel.
+- `static/style.css` — адаптивные стили.
 
 Спецификации и агентские заметки вынесены в `../docs/`.
 
-## День 7
+## День 8
 
-Backend ставит `client_id` cookie и хранит память в `data/clients/<client_id>.json`.
+Перед каждым OpenRouter call backend:
 
-Agent сохраняет:
+1. собирает exact `messages` payload;
+2. считает `current_request_tokens`, `history_tokens`, `prompt_tokens_estimated`;
+3. проверяет `prompt + max_tokens` против `TOKEN_CONTEXT_LIMIT`;
+4. при overflow блокирует вызов и возвращает детали без траты ключа.
 
-- текущие сообщения чата;
-- summary текущего чата;
-- summaries прошлых чатов;
-- messages прошлых чатов для ручного возврата к ним;
-- факты о пользователе;
-- выводы/persona notes о пользователе;
-- preferred communication style.
+После успешного ответа UI показывает actual usage от OpenRouter (`prompt_tokens`, `completion_tokens`, `cost`) и cumulative totals.
 
-При каждом запросе agent заново загружает JSON с диска. Поэтому после перезапуска Flask тот же браузер с тем же `client_id` cookie видит старые `messages`, а следующий OpenRouter call получает их в prompt.
+Кнопки demo:
 
-Если пользователь возвращается к старому чату, выбранный архив становится `current_chat`, и его `messages` снова попадают в prompt. Остальные архивы остаются только summary-контекстом; полные transcripts других чатов в prompt не добавляются.
-
-Перед основным OpenRouter call agent вставляет память в system prompt. После ответа agent делает второй LLM call, чтобы обновить facts, inferences, style и current summary. Если memory-update JSON сломан, видимый ответ все равно возвращается.
-
-Все agent calls используют OpenRouter model `deepseek/deepseek-v4-flash`.
-
-Жёлтая кнопка `Тестовый сценарий` пошагово отправляет 25 scripted messages от вымышленного Android-разработчика Аркадия Чернова. Сценарий автоматически разбивает сообщения на пять чатов и показывает, как память переносится между темами.
+- **Short** — 2–3 коротких сообщения;
+- **Long** — длинная серия сообщений, виден рост history/prompt cost;
+- **Overflow** — локальный сценарий переполнения без OpenRouter;
+- **Clear** — сброс диалога и stats.
 
 ## API
 
 | Method | Path | Описание |
 | --- | --- | --- |
-| `GET` | `/api/chat` | Вернуть текущий чат и память клиента |
-| `POST` | `/api/chat` | Принять `{ "message": "..." }`, вернуть ответ агента |
-| `POST` | `/api/chat/new` | Архивировать текущий чат и начать новый |
-| `POST` | `/api/chat/resume` | Принять `{ "chat_id": "..." }`, восстановить архивный чат как текущий |
-| `DELETE` | `/api/chat` | Очистить память текущего клиента |
-| `POST` | `/api/demo/next` | Отправить следующий scripted demo message |
+| `GET` | `/api/chat` | Сообщения, token stats, context limit, turn history |
+| `POST` | `/api/chat` | `{ "message": "..." }` → ответ + обновлённые stats |
+| `DELETE` | `/api/chat` | Очистить диалог и token stats |
+| `POST` | `/api/demo/short` | Короткий demo-сценарий |
+| `POST` | `/api/demo/long` | Длинный demo-сценарий |
+| `POST` | `/api/demo/overflow` | Overflow без OpenRouter call |
 
 ## Запуск
 
@@ -72,19 +67,23 @@ http://localhost:5000
 
 | Переменная | Описание |
 | --- | --- |
-| `OPENROUTER_API_KEY` | Обязательный API-ключ OpenRouter |
-| `OPENROUTER_MODEL` | Модель OpenRouter, default `z-ai/glm-4.7-flash` |
+| `OPENROUTER_API_KEY` | API-ключ OpenRouter (нужен для Short/Long и обычного чата) |
+| `OPENROUTER_MODEL` | Модель OpenRouter, default `deepseek/deepseek-v4-flash` |
+| `TOKEN_CONTEXT_LIMIT` | Лимит контекста для preflight, default `4096` |
+| `TOKEN_MAX_TOKENS` | Response budget в preflight, default `512` |
+| `PROMPT_PRICE_PER_1M_TOKENS` | Опционально: цена prompt для estimated cost |
+| `COMPLETION_PRICE_PER_1M_TOKENS` | Опционально: цена completion для estimated cost |
 | `HOST` | Host Flask, default `0.0.0.0` |
 | `PORT` | Port Flask, default `5000` |
 
 ## Checks
 
 ```bash
-python -m py_compile server.py llm_client.py agent.py
-python -m unittest test_agent_persistence
+python -m py_compile server.py llm_client.py agent.py token_counter.py
+python -m unittest test_token_accounting
 git diff --check
 ```
 
 ## Ограничения
 
-В демо нет auth, rate limit, streaming и native Android app. API-ключ хранится только на backend и не передается в frontend.
+В демо нет auth, rate limit и streaming. API-ключ хранится только на backend. Overflow demo не тратит баланс OpenRouter.

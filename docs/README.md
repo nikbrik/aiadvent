@@ -11,6 +11,7 @@ This directory is the source of truth for project documentation.
 - `specs/assignment-5-model-versions.md` - model-version comparison assignment requirements.
 - `specs/assignment-6-first-agent.md` - first-agent and long-term-memory assignment requirements.
 - `specs/assignment-7-context-persistence.md` - context persistence assignment requirements.
+- `specs/assignment-8-token-accounting.md` - token accounting, cost growth, and context overflow assignment requirements.
 - `specs/submission-snapshot-policy.md` - project rule for daily snapshot submissions and previous-assignment compatibility.
 - `agent-notes/llm-demo-assignment-2.md` - implementation decisions, provider debugging notes, and guardrails for future Codex/Cursor sessions.
 - `agent-notes/llm-demo-assignment-3.md` - Day 3 reasoning-mode implementation notes.
@@ -18,6 +19,7 @@ This directory is the source of truth for project documentation.
 - `agent-notes/llm-demo-assignment-5.md` - Day 5 model-version implementation notes.
 - `agent-notes/llm-demo-assignment-6.md` - Day 6 agent and memory implementation notes.
 - `agent-notes/llm-demo-assignment-7.md` - Day 7 context persistence implementation notes.
+- `agent-notes/llm-demo-assignment-8.md` - Day 8 token accounting implementation notes.
 
 ## Agent Entrypoints
 

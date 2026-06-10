@@ -3,16 +3,17 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AI Advent Day 7 Context</title>
+    <title>AI Advent Day 8 Tokens</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 7</p>
-        <h1>Сохранение контекста</h1>
+        <p class="eyebrow">AI Advent · День 8</p>
+        <h1>Token Accounting</h1>
         <p class="lead">
-          Чат-агент сохраняет messages в JSON и восстанавливает диалог после перезапуска.
+          Локальная оценка prompt до вызова модели, фактические usage от OpenRouter после ответа,
+          рост стоимости по ходу диалога и preflight overflow без траты ключа.
         </p>
       </section>
 
@@ -32,43 +33,66 @@
             </label>
             <div class="actions">
               <button id="send-button" class="primary-button" type="submit">Отправить</button>
-              <button id="demo-button" class="demo-button" type="button">Тестовый сценарий 0/25</button>
-              <button id="new-button" class="secondary-button" type="button">Новый чат</button>
-              <button id="clear-button" class="danger-button" type="button">Очистить память</button>
+              <button id="short-button" class="demo-button" type="button">Short</button>
+              <button id="long-button" class="demo-button" type="button">Long</button>
+              <button id="overflow-button" class="warn-button" type="button">Overflow</button>
+              <button id="clear-button" class="danger-button" type="button">Clear</button>
             </div>
           </form>
 
+          <div id="alert" class="alert hidden" role="alert"></div>
           <div id="metadata" class="metadata">Метаданные появятся после ответа.</div>
         </section>
 
-        <aside class="panel memory-panel">
+        <aside class="panel stats-panel">
           <div class="panel-head">
-            <h2>Память</h2>
+            <h2>Токены и стоимость</h2>
           </div>
 
-          <section class="memory-section">
-            <h3>Стиль</h3>
-            <p id="style-memory" class="memory-text">Пока нет данных.</p>
+          <section class="stats-section">
+            <h3>Текущий ход</h3>
+            <dl id="current-turn" class="stats-grid"></dl>
           </section>
 
-          <section class="memory-section">
-            <h3>Факты</h3>
-            <ul id="facts-memory" class="memory-list"></ul>
+          <section class="stats-section">
+            <h3>Prompt vs limit</h3>
+            <div class="limit-bar-wrap">
+              <div id="limit-bar" class="limit-bar"></div>
+            </div>
+            <dl id="prompt-usage" class="stats-grid"></dl>
           </section>
 
-          <section class="memory-section">
-            <h3>Выводы</h3>
-            <ul id="inferences-memory" class="memory-list"></ul>
+          <section class="stats-section">
+            <h3>Накопительно</h3>
+            <dl id="cumulative" class="stats-grid"></dl>
           </section>
 
-          <section class="memory-section">
-            <h3>Текущий summary</h3>
-            <p id="current-summary" class="memory-text">Пока нет данных.</p>
+          <section class="stats-section">
+            <h3>Конфиг</h3>
+            <dl id="config" class="stats-grid"></dl>
           </section>
 
-          <section class="memory-section">
-            <h3>Прошлые чаты</h3>
-            <ul id="archived-memory" class="memory-list"></ul>
+          <section class="stats-section">
+            <h3>История ходов</h3>
+            <div class="table-wrap">
+              <table id="turn-table" class="turn-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>status</th>
+                    <th>request</th>
+                    <th>history</th>
+                    <th>prompt est</th>
+                    <th>prompt act</th>
+                    <th>resp est</th>
+                    <th>resp act</th>
+                    <th>total est</th>
+                    <th>cost</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
           </section>
         </aside>
       </section>
@@ -80,31 +104,51 @@
       const messagesBox = document.querySelector("#messages");
       const statusBox = document.querySelector("#status");
       const metadataBox = document.querySelector("#metadata");
+      const alertBox = document.querySelector("#alert");
       const sendButton = document.querySelector("#send-button");
-      const demoButton = document.querySelector("#demo-button");
-      const newButton = document.querySelector("#new-button");
+      const shortButton = document.querySelector("#short-button");
+      const longButton = document.querySelector("#long-button");
+      const overflowButton = document.querySelector("#overflow-button");
       const clearButton = document.querySelector("#clear-button");
-      const styleMemory = document.querySelector("#style-memory");
-      const factsMemory = document.querySelector("#facts-memory");
-      const inferencesMemory = document.querySelector("#inferences-memory");
-      const currentSummary = document.querySelector("#current-summary");
-      const archivedMemory = document.querySelector("#archived-memory");
-      let demoComplete = false;
+      const currentTurnBox = document.querySelector("#current-turn");
+      const promptUsageBox = document.querySelector("#prompt-usage");
+      const cumulativeBox = document.querySelector("#cumulative");
+      const configBox = document.querySelector("#config");
+      const limitBar = document.querySelector("#limit-bar");
+      const turnTableBody = document.querySelector("#turn-table tbody");
+
+      const actionButtons = [sendButton, shortButton, longButton, overflowButton, clearButton];
 
       function setBusy(isBusy) {
-        sendButton.disabled = isBusy;
-        demoButton.disabled = isBusy || demoComplete;
-        newButton.disabled = isBusy;
-        clearButton.disabled = isBusy;
-        messageInput.disabled = isBusy;
-        archivedMemory.querySelectorAll("button").forEach((button) => {
+        actionButtons.forEach((button) => {
           button.disabled = isBusy;
         });
+        messageInput.disabled = isBusy;
       }
 
       function setStatus(text, mode = "") {
         statusBox.textContent = text;
         statusBox.className = mode ? `status ${mode}` : "status";
+      }
+
+      function showAlert(text, mode = "warn") {
+        if (!text) {
+          alertBox.className = "alert hidden";
+          alertBox.textContent = "";
+          return;
+        }
+        alertBox.className = `alert ${mode}`;
+        alertBox.textContent = text;
+      }
+
+      function formatNumber(value) {
+        if (value === null || value === undefined || value === "") return "—";
+        return Number(value).toLocaleString("ru-RU");
+      }
+
+      function formatCost(value, label) {
+        if (value === null || value === undefined) return "—";
+        return `$${Number(value).toFixed(6)} (${label})`;
       }
 
       function renderMessages(messages) {
@@ -129,97 +173,164 @@
         messagesBox.scrollTop = messagesBox.scrollHeight;
       }
 
-      function renderList(node, items, emptyText) {
-        const values = (items || []).filter(Boolean);
-        if (values.length === 0) {
-          node.innerHTML = `<li class="empty-list">${emptyText}</li>`;
-          return;
-        }
-        node.replaceChildren(...values.map((value) => {
-          const item = document.createElement("li");
-          item.textContent = value.summary || value;
-          return item;
+      function renderDefinitionList(node, rows) {
+        node.replaceChildren(...rows.flatMap(([label, value]) => {
+          const dt = document.createElement("dt");
+          dt.textContent = label;
+          const dd = document.createElement("dd");
+          dd.textContent = value;
+          return [dt, dd];
         }));
       }
 
-      function renderMemory(data) {
-        const profile = data.profile || {};
-        styleMemory.textContent = profile.style || "Пока нет данных.";
-        currentSummary.textContent = data.current_chat_summary || "Пока нет данных.";
-        renderList(factsMemory, profile.facts, "Фактов пока нет.");
-        renderList(inferencesMemory, profile.inferences, "Выводов пока нет.");
-        renderArchivedChats(data.archived_chats || []);
-      }
-
-      function renderArchivedChats(chats) {
-        const values = chats.filter(Boolean);
-        if (values.length === 0) {
-          archivedMemory.innerHTML = '<li class="empty-list">Прошлых чатов пока нет.</li>';
+      function renderCurrentTurn(data) {
+        const turn = data.current_turn || data.last_turn;
+        if (!turn) {
+          renderDefinitionList(currentTurnBox, [["Статус", "Нет ходов"]]);
           return;
         }
 
-        archivedMemory.replaceChildren(...values.map((chat) => {
-          const item = document.createElement("li");
-          item.className = "archived-chat";
+        const costText = turn.turn_cost_actual !== null && turn.turn_cost_actual !== undefined
+          ? formatCost(turn.turn_cost_actual, "actual")
+          : formatCost(turn.turn_cost_estimated, "estimated");
 
-          const summary = document.createElement("span");
-          summary.className = "archived-summary";
-          summary.textContent = chat.summary || "Чат без summary.";
+        renderDefinitionList(currentTurnBox, [
+          ["Статус", turn.status],
+          ["Request tokens (estimated)", formatNumber(turn.current_request_tokens)],
+          ["History tokens (estimated)", formatNumber(turn.history_tokens)],
+          ["Prompt (estimated)", formatNumber(turn.prompt_tokens_estimated)],
+          ["Prompt (actual)", formatNumber(turn.prompt_tokens_actual)],
+          ["Response (estimated)", formatNumber(turn.response_tokens_estimated)],
+          ["Response (actual)", formatNumber(turn.response_tokens_actual)],
+          ["Total (estimated)", formatNumber(turn.total_tokens_estimated)],
+          ["Total (actual)", formatNumber(turn.total_tokens_actual)],
+          ["Turn cost", costText],
+        ]);
+      }
 
-          const meta = document.createElement("span");
-          meta.className = "archived-meta";
-          const count = chat.messages ? chat.messages.length : chat.message_count || 0;
-          meta.textContent = count ? `${count} сообщений` : "только summary";
+      function renderPromptUsage(data) {
+        const usage = data.prompt_usage || {};
+        const limit = usage.context_limit || data.context_limit || 0;
+        const projected = usage.projected_total_tokens || 0;
+        const ratio = limit > 0 ? Math.min(100, (projected / limit) * 100) : 0;
+        limitBar.style.width = `${ratio}%`;
+        limitBar.className = ratio >= 100 ? "limit-bar over" : ratio >= 80 ? "limit-bar warn" : "limit-bar";
 
-          item.append(summary, meta);
+        renderDefinitionList(promptUsageBox, [
+          ["Prompt (estimated)", formatNumber(usage.prompt_tokens_estimated)],
+          ["Response budget", formatNumber(usage.response_budget || data.response_budget)],
+          ["Projected total (estimated)", formatNumber(projected)],
+          ["Context limit", formatNumber(limit)],
+          ["Remaining", formatNumber(usage.remaining_tokens)],
+        ]);
+      }
 
-          if (chat.id && count > 0) {
-            const button = document.createElement("button");
-            button.className = "chat-switch-button";
-            button.type = "button";
-            button.dataset.chatId = chat.id;
-            button.textContent = "Вернуться";
-            item.append(button);
+      function renderCumulative(data) {
+        const cumulative = data.cumulative || {};
+        const pricing = data.pricing || {};
+        const costActual = cumulative.cost_actual !== null && cumulative.cost_actual !== undefined
+          ? formatCost(cumulative.cost_actual, "actual")
+          : "—";
+        const costEstimated = pricing.configured
+          ? formatCost(cumulative.cost_estimated, "estimated")
+          : "цены не заданы";
+
+        renderDefinitionList(cumulativeBox, [
+          ["Prompt (estimated)", formatNumber(cumulative.prompt_tokens_estimated)],
+          ["Prompt (actual)", formatNumber(cumulative.prompt_tokens_actual)],
+          ["Response (estimated)", formatNumber(cumulative.response_tokens_estimated)],
+          ["Response (actual)", formatNumber(cumulative.response_tokens_actual)],
+          ["Total (estimated)", formatNumber(cumulative.total_tokens_estimated)],
+          ["Total (actual)", formatNumber(cumulative.total_tokens_actual)],
+          ["Cost (actual)", costActual],
+          ["Cost (estimated)", costEstimated],
+        ]);
+      }
+
+      function renderConfig(data) {
+        const pricing = data.pricing || {};
+        renderDefinitionList(configBox, [
+          ["Model", data.model || "—"],
+          ["Tokenizer", data.tokenizer || "—"],
+          ["Context limit", formatNumber(data.context_limit)],
+          ["Response budget", formatNumber(data.response_budget)],
+          ["Prompt $/1M", pricing.prompt_price_per_1m ?? "—"],
+          ["Completion $/1M", pricing.completion_price_per_1m ?? "—"],
+        ]);
+      }
+
+      function renderTurnTable(turns) {
+        const rows = turns || [];
+        if (rows.length === 0) {
+          turnTableBody.innerHTML = '<tr><td colspan="10" class="empty-table">Ходов пока нет.</td></tr>';
+          return;
+        }
+
+        turnTableBody.replaceChildren(...rows.map((turn) => {
+          const row = document.createElement("tr");
+          if (turn.status === "overflow") {
+            row.className = "row-overflow";
           }
 
-          return item;
+          const cost = turn.turn_cost_actual ?? turn.turn_cost_estimated;
+          const costLabel = turn.turn_cost_actual != null ? "actual" : "estimated";
+          const cells = [
+            turn.turn,
+            turn.status,
+            turn.current_request_tokens,
+            turn.history_tokens,
+            turn.prompt_tokens_estimated,
+            turn.prompt_tokens_actual ?? "—",
+            turn.response_tokens_estimated,
+            turn.response_tokens_actual ?? "—",
+            turn.total_tokens_estimated ?? "—",
+            cost == null ? "—" : `${Number(cost).toFixed(6)} (${costLabel})`,
+          ];
+
+          row.replaceChildren(...cells.map((value) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            return cell;
+          }));
+          return row;
         }));
       }
 
       function renderState(data) {
         renderMessages(data.messages || []);
-        renderMemory(data);
-        renderDemoProgress(data);
-      }
-
-      function renderDemoProgress(data) {
-        const progress = data.demo_progress ?? 0;
-        const total = data.demo_total ?? 25;
-        demoComplete = Boolean(data.demo_complete || progress >= total);
-        demoButton.textContent = demoComplete
-          ? `Сценарий завершён (${total}/${total})`
-          : `Тестовый сценарий ${progress}/${total}`;
-        demoButton.disabled = demoComplete;
+        renderCurrentTurn(data);
+        renderPromptUsage(data);
+        renderCumulative(data);
+        renderConfig(data);
+        renderTurnTable(data.turns || []);
       }
 
       function renderMetadata(data) {
         const meta = data.metadata || {};
         const items = [];
         if (meta.model) items.push(`model: ${meta.model}`);
-        if (meta.duration_ms !== null && meta.duration_ms !== undefined) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
-        if (meta.total_tokens !== null && meta.total_tokens !== undefined) items.push(`tokens: ${meta.total_tokens}`);
-        if (meta.cost !== null && meta.cost !== undefined) items.push(`cost: $${Number(meta.cost).toFixed(6)}`);
-        if (data.memory_update_error) items.push(`memory update warning: ${data.memory_update_error}`);
+        if (meta.duration_ms != null) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
+        if (meta.total_tokens != null) items.push(`tokens (actual): ${meta.total_tokens}`);
+        if (meta.cost != null) items.push(`cost (actual): $${Number(meta.cost).toFixed(6)}`);
+        if (meta.cost_details && typeof meta.cost_details === "object") {
+          items.push(`cost_details (actual): ${JSON.stringify(meta.cost_details)}`);
+        }
         metadataBox.textContent = items.length ? items.join(" · ") : "Метаданные недоступны.";
+      }
+
+      async function requestJson(url, options = {}) {
+        const response = await fetch(url, options);
+        const data = await response.json();
+        return { response, data };
       }
 
       async function loadState() {
         setStatus("Загрузка...", "loading");
         try {
-          const response = await fetch("/api/chat");
-          const data = await response.json();
+          const { response, data } = await requestJson("/api/chat");
           if (!response.ok) throw new Error(data.error || "Load failed");
           renderState(data);
+          showAlert(data.error || "", data.overflow ? "error" : "");
           setStatus("Готово");
         } catch (error) {
           setStatus("Ошибка", "error");
@@ -237,15 +348,25 @@
 
         setBusy(true);
         setStatus("Запрос...", "loading");
-        metadataBox.textContent = "Ждем ответ OpenRouter и обновление памяти...";
+        metadataBox.textContent = "Preflight token check, затем OpenRouter...";
+        showAlert("");
 
         try {
-          const response = await fetch("/api/chat", {
+          const { response, data } = await requestJson("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message }),
           });
-          const data = await response.json();
+
+          if (data.overflow) {
+            messageInput.value = "";
+            renderState(data);
+            renderMetadata(data);
+            showAlert(data.error || "Preflight overflow", "error");
+            setStatus("Overflow", "error");
+            return;
+          }
+
           if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Unknown error"}`);
           messageInput.value = "";
           renderState(data);
@@ -260,64 +381,13 @@
         }
       });
 
-      newButton.addEventListener("click", async () => {
+      shortButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("Архивация...", "loading");
+        setStatus("Short demo...", "loading");
+        showAlert("");
         try {
-          const response = await fetch("/api/chat/new", { method: "POST" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "New chat failed");
-          renderState(data);
-          metadataBox.textContent = "Текущий чат архивирован.";
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
-      });
-
-      archivedMemory.addEventListener("click", async (event) => {
-        const button = event.target.closest("button[data-chat-id]");
-        if (!button) {
-          return;
-        }
-
-        setBusy(true);
-        setStatus("Возврат...", "loading");
-        try {
-          const response = await fetch("/api/chat/resume", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: button.dataset.chatId }),
-          });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Resume chat failed");
-          renderState(data);
-          metadataBox.textContent = "Старый чат восстановлен. Можно продолжать диалог.";
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
-      });
-
-      demoButton.addEventListener("click", async () => {
-        if (demoComplete) {
-          return;
-        }
-
-        setBusy(true);
-        setStatus("Сценарий...", "loading");
-        metadataBox.textContent = "Отправляем следующее тестовое сообщение...";
-
-        try {
-          const response = await fetch("/api/demo/next", { method: "POST" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Demo step failed"}`);
+          const { response, data } = await requestJson("/api/demo/short", { method: "POST" });
+          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Short demo failed"}`);
           renderState(data);
           renderMetadata(data);
           setStatus("Готово");
@@ -329,15 +399,54 @@
         }
       });
 
+      longButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("Long demo...", "loading");
+        showAlert("");
+        try {
+          const { response, data } = await requestJson("/api/demo/long", { method: "POST" });
+          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Long demo failed"}`);
+          renderState(data);
+          renderMetadata(data);
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      overflowButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("Overflow demo...", "loading");
+        showAlert("");
+        try {
+          const { response, data } = await requestJson("/api/demo/overflow", { method: "POST" });
+          renderState(data);
+          renderMetadata(data);
+          showAlert(data.error || "Preflight overflow", "error");
+          setStatus("Overflow", "error");
+          if (!response.ok && !data.overflow) {
+            throw new Error(`${data.status || response.status}: ${data.error || "Overflow demo failed"}`);
+          }
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
       clearButton.addEventListener("click", async () => {
         setBusy(true);
         setStatus("Очистка...", "loading");
+        showAlert("");
         try {
-          const response = await fetch("/api/chat", { method: "DELETE" });
-          const data = await response.json();
+          const { response, data } = await requestJson("/api/chat", { method: "DELETE" });
           if (!response.ok) throw new Error(data.error || "Clear failed");
           renderState(data);
-          metadataBox.textContent = "Память этого клиента очищена.";
+          metadataBox.textContent = "Диалог и token stats очищены.";
           setStatus("Готово");
         } catch (error) {
           setStatus("Ошибка", "error");
