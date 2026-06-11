@@ -110,7 +110,9 @@ def log_outgoing_response(response):
 
 @app.get("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    response = send_from_directory(app.static_folder, "index.html")
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/api/chat")

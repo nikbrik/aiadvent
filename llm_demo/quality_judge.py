@@ -28,6 +28,89 @@ def judge_answer(llm, question, answer, ground_truth, llm_options):
     return parse_judge_result(completion.get("content") or "")
 
 
+def evaluate_fact_recall(answer, ground_truth):
+    answer_text = str(answer or "")
+    answer_upper = answer_text.upper()
+    facts = []
+    for key, value in (ground_truth or {}).items():
+        token = str(value or "").strip()
+        found = bool(token) and token.upper() in answer_upper
+        facts.append({
+            "key": str(key),
+            "value": token,
+            "found": found,
+        })
+
+    total = len(facts) or 1
+    found_count = sum(1 for item in facts if item["found"])
+    score = found_count / total
+    passed = found_count == total
+    missing = [item["value"] for item in facts if not item["found"]]
+    if passed:
+        note = "All required facts present."
+    elif missing:
+        note = f"Missing: {', '.join(missing)}."
+    else:
+        note = "Required facts not found."
+
+    return {
+        "passed": passed,
+        "score": score,
+        "note": note,
+        "facts": facts,
+        "source": "deterministic",
+    }
+
+
+def merge_judge_results(fact_check, llm_judge):
+    fact_check = fact_check or {}
+    llm_judge = llm_judge or {}
+    fact_score = float(fact_check.get("score") or 0.0)
+    llm_score = float(llm_judge.get("score") or 0.0)
+    if fact_check.get("passed"):
+        score = 1.0
+        passed = True
+    else:
+        score = min(fact_score, llm_score) if llm_judge else fact_score
+        passed = False
+    notes = []
+    if fact_check.get("note"):
+        notes.append(str(fact_check["note"]))
+    if llm_judge.get("note"):
+        notes.append(str(llm_judge["note"]))
+    return {
+        "passed": passed,
+        "score": max(0.0, min(1.0, score)),
+        "note": " · ".join(notes) if notes else "",
+        "facts": fact_check.get("facts") or [],
+        "llm_score": llm_score if llm_judge else None,
+    }
+
+
+def judge_recall_answer(llm, question, answer, ground_truth, llm_options):
+    fact_check = evaluate_fact_recall(answer, ground_truth)
+    try:
+        llm_judge = judge_answer(llm, question, answer, ground_truth, llm_options)
+    except Exception as exc:
+        llm_judge = {
+            "passed": False,
+            "score": 0.0,
+            "note": f"judge failed: {exc}",
+        }
+    return merge_judge_results(fact_check, llm_judge)
+
+
+def safe_judge_recall_answer(llm, question, answer, ground_truth, llm_options):
+    try:
+        return judge_recall_answer(llm, question, answer, ground_truth, llm_options)
+    except Exception as exc:
+        fact_check = evaluate_fact_recall(answer, ground_truth)
+        fact_check["note"] = f"judge failed: {exc}"
+        fact_check["passed"] = False
+        fact_check["score"] = 0.0
+        return fact_check
+
+
 def safe_judge_answer(llm, question, answer, ground_truth, llm_options):
     try:
         return judge_answer(llm, question, answer, ground_truth, llm_options)
@@ -75,8 +158,10 @@ def parse_json_object(text):
 
 def quality_delta(without_score, with_score):
     delta = with_score - without_score
+    if abs(delta) <= 0.05:
+        if without_score >= 0.99 and with_score >= 0.99:
+            return "equivalent_recall"
+        return "similar"
     if delta > 0.05:
         return "with_scored_higher"
-    if delta < -0.05:
-        return "with_scored_lower"
-    return "similar"
+    return "with_scored_lower"

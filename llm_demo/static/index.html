@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AI Advent Day 9 — Сжатие истории</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=4">
   </head>
   <body>
     <main class="shell">
@@ -12,18 +12,24 @@
         <p class="eyebrow">AI Advent · День 9</p>
         <h1>Сжатие истории диалога</h1>
         <p class="lead">
-          Агент хранит последние 6 сообщений целиком, а более старые сжимает в краткое резюме
-          (каждые 10 сообщений). Можно сравнить качество ответов и расход токенов со сжатием и без.
+          Сценарий: в начале диалога просим запомнить <strong>BLUEFOX / Kotlin / Orbit</strong>,
+          потом идёт шум из 14 вопросов про Python, затем проверка памяти.
+          Кнопка «Сравнить» покажет, сколько токенов съела бы вся история и сколько — сжатие.
         </p>
       </section>
 
+      <div id="legacy-banner" class="legacy-banner hidden" role="status"></div>
+
+      <section id="compare-showcase" class="compare-showcase panel hidden" aria-live="polite"></section>
+
       <section class="assignment-panel panel">
         <h2>Как это работает</h2>
-        <ul class="assignment-list">
-          <li>Последние <strong>6</strong> сообщений уходят в модель без изменений</li>
-          <li>Более ранние заменяются <strong>резюме</strong> (обновляется каждые 10 сообщений)</li>
-          <li>Кнопка «Сравнить» прогоняет один сценарий дважды — со сжатием и без</li>
-        </ul>
+        <ol class="assignment-list story-steps">
+          <li>В <strong>первом</strong> сообщении — три факта (кодовое слово, язык, проект)</li>
+          <li>Дальше — <strong>14</strong> коротких реплик про Python (история раздувается)</li>
+          <li>Последний вопрос: «что было в первом сообщении?» — проверка recall</li>
+          <li>Со сжатием: старое → <strong>резюме</strong>, в prompt только хвост + summary</li>
+        </ol>
       </section>
 
       <section class="workspace">
@@ -52,7 +58,6 @@
           </form>
 
           <div id="alert" class="alert hidden" role="alert"></div>
-          <div id="compare-results" class="compare-results hidden" aria-live="polite"></div>
           <details id="payload-details" class="payload-details">
             <summary>Что именно отправилось модели</summary>
             <pre id="payload-preview" class="payload-preview"></pre>
@@ -71,8 +76,10 @@
           </section>
 
           <section class="stats-section highlight-section compare-section">
-            <h3>Сравнение: со сжатием и без</h3>
-            <div id="compare-panel" class="compare-panel"></div>
+            <h3>Сравнение</h3>
+            <div id="compare-panel" class="compare-panel">
+              <p class="empty-state">Результаты появятся в блоке «До / После» выше после «Сравнить».</p>
+            </div>
           </section>
 
           <section class="stats-section">
@@ -120,7 +127,7 @@
     </main>
 
     <script>
-      const COMPARE_STORAGE_KEY = "day9_compare_results";
+      const COMPARE_STORAGE_KEY = "day9_compare_results_v2";
       const form = document.querySelector("#chat-form");
       const messageInput = document.querySelector("#message");
       const compressionToggle = document.querySelector("#compression-enabled");
@@ -128,7 +135,8 @@
       const statusBox = document.querySelector("#status");
       const metadataBox = document.querySelector("#metadata");
       const alertBox = document.querySelector("#alert");
-      const compareResultsBox = document.querySelector("#compare-results");
+      const legacyBanner = document.querySelector("#legacy-banner");
+      const compareShowcase = document.querySelector("#compare-showcase");
       const payloadPreview = document.querySelector("#payload-preview");
       const sendButton = document.querySelector("#send-button");
       const compareButton = document.querySelector("#compare-button");
@@ -169,6 +177,12 @@
         with_scored_higher: "со сжатием ответили точнее",
         with_scored_lower: "со сжатием ответили хуже",
         similar: "качество примерно одинаковое",
+        equivalent_recall: "recall эквивалентен — все факты на месте",
+      };
+
+      const PAYBACK_LABELS = {
+        yes: "сжатие окупилось за сценарий",
+        not_yet: "overhead merge ещё не окупился",
       };
 
       function formatQualityDelta(value) {
@@ -263,44 +277,134 @@
           .replace(/'/g, "&#39;");
       }
 
-      function clearCompareResultsBox() {
-        compareResultsBox.className = "compare-results hidden";
-        compareResultsBox.replaceChildren();
+      function clearCompareShowcase() {
+        compareShowcase.className = "compare-showcase panel hidden";
+        compareShowcase.replaceChildren();
+      }
+
+      function buildBarRow(bar) {
+        return `
+          <div class="viz-bar-row">
+            <div class="viz-bar-head">
+              <strong>${escapeHtml(bar.label)}</strong>
+              <span class="viz-bar-tokens">${formatNumber(bar.tokens)} tok</span>
+            </div>
+            <div class="viz-bar-track" aria-hidden="true">
+              <div class="viz-bar-fill viz-bar-${bar.tone}" style="width:${bar.width_pct}%"></div>
+            </div>
+            <p class="viz-bar-detail">${escapeHtml(bar.detail)}</p>
+          </div>`;
+      }
+
+      function buildVisualTable(rows) {
+        const body = rows.map((row) => {
+          const saved = row.saved_pct != null ? `−${row.saved_pct}%` : "—";
+          return `
+            <tr>
+              <th scope="row">${escapeHtml(row.label)}</th>
+              <td>${formatNumber(row.before)}</td>
+              <td>${formatNumber(row.after)}</td>
+              <td class="viz-saved">${saved}</td>
+            </tr>`;
+        }).join("");
+        return `
+          <table class="viz-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Без сжатия</th>
+                <th>Со сжатием</th>
+                <th>Δ</th>
+              </tr>
+            </thead>
+            <tbody>${body}</tbody>
+          </table>`;
+      }
+
+      function buildVisualShowcase(comparison) {
+        const visual = comparison.visual;
+        if (!visual) return "";
+
+        const without = pickCompareTrack(comparison, false);
+        const withTrack = pickCompareTrack(comparison, true);
+        const story = (visual.story || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("");
+
+        return `
+          <header class="viz-header">
+            <p class="eyebrow">До / После · recall-запрос</p>
+            <h2 class="viz-headline">
+              ${formatNumber(visual.headline_before)}
+              <span class="viz-arrow">→</span>
+              ${formatNumber(visual.headline_after)}
+              <span class="viz-unit">tok</span>
+            </h2>
+            <p class="viz-subhead">Экономия на последнем запросе: <strong>−${visual.headline_reduction_pct}%</strong></p>
+          </header>
+
+          <ol class="story-steps compact">${story}</ol>
+
+          <div class="viz-bars">${visual.bars.map(buildBarRow).join("")}</div>
+
+          ${buildVisualTable(visual.table)}
+
+          <div class="compare-grid viz-answers">
+            <article class="compare-card">
+              <h4>Ответ без сжатия</h4>
+              ${renderFactChecklist(without?.judge?.facts)}
+              <p class="compare-answer">${escapeHtml(without?.answer || "—")}</p>
+            </article>
+            <article class="compare-card">
+              <h4>Ответ со сжатием</h4>
+              ${renderFactChecklist(withTrack?.judge?.facts)}
+              <p class="compare-answer">${escapeHtml(withTrack?.answer || "—")}</p>
+              <details class="summary-preview">
+                <summary>Резюме в system prompt</summary>
+                <pre class="summary-snippet">${escapeHtml(withTrack?.summary || "—")}</pre>
+              </details>
+            </article>
+          </div>
+
+          <p class="compare-verdict">${escapeHtml(comparison.verdict || visual.punchline || "")}</p>`;
+      }
+
+      function buildCompareSidebar(comparison) {
+        const breakdown = comparison.token_breakdown || {};
+        const net = Number(breakdown.net_saved || 0);
+        const netClass = net >= 0 ? "token-positive" : "token-negative";
+        return `
+          <p class="meta-line">Net за сценарий: <strong class="${netClass}">${net >= 0 ? "+" : ""}${formatNumber(net)} tok</strong></p>
+          <p class="meta-line">${formatQualityDelta(comparison.quality_delta)}</p>`;
       }
 
       function buildCompareMarkup(without, withTrack, comparison) {
-        const withoutScore = without.judge?.score != null ? without.judge.score.toFixed(2) : "—";
-        const withScore = withTrack.judge?.score != null ? withTrack.judge.score.toFixed(2) : "—";
-        const saved = formatNumber(comparison.tokens_saved);
-        const quality = formatQualityDelta(comparison.quality_delta);
-
-        return `
-          <div class="compare-grid">
-            <article class="compare-card">
-              <h4>Без сжатия</h4>
-              <p>Точность: <strong>${withoutScore}</strong> ${without.judge?.passed ? "✓" : "✗"}</p>
-              <p class="compare-note">${escapeHtml(without.judge?.note || "—")}</p>
-              <p>Токенов в запросах: ${formatNumber(without.tokens?.cumulative_prompt_full_estimated)}</p>
-              <p class="compare-answer">${escapeHtml(without.answer || "—")}</p>
-            </article>
-            <article class="compare-card">
-              <h4>Со сжатием</h4>
-              <p>Точность: <strong>${withScore}</strong> ${withTrack.judge?.passed ? "✓" : "✗"}</p>
-              <p class="compare-note">${escapeHtml(withTrack.judge?.note || "—")}</p>
-              <p>Токенов в запросах: ${formatNumber(withTrack.tokens?.cumulative_prompt_estimated)}</p>
-              <p>На сжатие резюме: ${formatNumber(withTrack.tokens?.cumulative_summarization_estimated)}</p>
-              <p class="compare-answer">${escapeHtml(withTrack.answer || "—")}</p>
-            </article>
-          </div>
-          <p class="compare-delta">Сэкономлено токенов: <strong>${saved}</strong> · ${quality}</p>`;
+        return buildCompareSidebar(comparison);
       }
 
+      function renderFactChecklist(facts) {
+        if (!facts?.length) return "";
+        const items = facts.map((fact) => {
+          const mark = fact.found ? "✓" : "✗";
+          const label = fact.value || fact.key || "—";
+          return `<li class="${fact.found ? "fact-ok" : "fact-miss"}">${mark} ${escapeHtml(label)}</li>`;
+        }).join("");
+        return `<ul class="fact-checklist">${items}</ul>`;
+      }
+
+      function renderLegacyBanner(data) {
+        if (!data.legacy_session) {
+          legacyBanner.className = "legacy-banner hidden";
+          legacyBanner.textContent = "";
+          return;
+        }
+        legacyBanner.className = "legacy-banner";
+        legacyBanner.textContent = data.legacy_hint || "Старая сессия в cookie. Нажмите «Очистить».";
+      }
       function renderCompare(comparison, options = {}) {
         const { scroll = false, persist = false } = options;
 
         if (!comparison) {
-          comparePanel.innerHTML = '<p class="empty-state">Нажмите «Сравнить», чтобы увидеть разницу.</p>';
-          clearCompareResultsBox();
+          comparePanel.innerHTML = '<p class="empty-state">Результаты появятся в блоке «До / После» выше после «Сравнить».</p>';
+          clearCompareShowcase();
           return;
         }
 
@@ -308,7 +412,7 @@
         const withTrack = pickCompareTrack(comparison, true);
         if (!without || !withTrack) {
           comparePanel.innerHTML = '<p class="empty-state">Не удалось разобрать ответ сервера.</p>';
-          clearCompareResultsBox();
+          clearCompareShowcase();
           try {
             sessionStorage.removeItem(COMPARE_STORAGE_KEY);
           } catch (storageError) {
@@ -317,10 +421,9 @@
           return;
         }
 
-        const markup = buildCompareMarkup(without, withTrack, comparison);
-        comparePanel.innerHTML = markup;
-        compareResultsBox.className = "compare-results";
-        compareResultsBox.innerHTML = `<h3>Результаты сравнения</h3>${markup}`;
+        compareShowcase.className = "compare-showcase panel";
+        compareShowcase.innerHTML = buildVisualShowcase(comparison);
+        comparePanel.innerHTML = buildCompareSidebar(comparison);
 
         if (persist) {
           try {
@@ -331,7 +434,7 @@
         }
 
         if (scroll) {
-          compareResultsBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          compareShowcase.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       }
 
@@ -409,6 +512,7 @@
       }
 
       function renderState(data) {
+        renderLegacyBanner(data);
         renderMessages(data.messages);
         renderTokenTriple(data);
         renderSummary(data);
@@ -420,8 +524,10 @@
         if (data.compression) {
           compressionToggle.checked = Boolean(data.compression.enabled);
         }
-        if (data.metadata) {
+        if (data.metadata && !data.legacy_session) {
           metadataBox.textContent = JSON.stringify(data.metadata, null, 2);
+        } else if (data.legacy_session) {
+          metadataBox.textContent = "Служебные поля старой сессии скрыты. Очистите чат.";
         }
       }
 
@@ -469,10 +575,7 @@
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "Сравнение не удалось");
           renderCompare(data.comparison, { scroll: true, persist: true });
-          showAlert(
-            `Готово: сэкономлено ${formatNumber(data.comparison?.tokens_saved)} токенов. Результаты — ниже в чате и справа.`,
-            "ok",
-          );
+          showAlert(data.comparison?.visual?.punchline || data.comparison?.verdict || "Сравнение готово.", "ok");
           setStatus("Сравнение готово", "ok");
         } catch (error) {
           showAlert(error.message, "error");

@@ -8,6 +8,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
+    from compare_demo import (
+        COMPARE_GROUND_TRUTH,
+        COMPARE_PINNED_FACTS,
+        COMPARE_RECALL_PROMPT,
+        COMPARE_SECRET_PROMPT,
+        build_compare_verdict,
+        build_token_breakdown,
+        build_visual_comparison,
+        compare_script_steps,
+    )
     from context_compression import (
         append_summary_block,
         build_payload_preview,
@@ -19,9 +29,19 @@ try:
         reset_compression,
         select_history_messages,
     )
-    from quality_judge import quality_delta, safe_judge_answer
+    from quality_judge import quality_delta, safe_judge_recall_answer
     from token_counter import count_message_tokens, count_text_tokens, tokenizer_name
 except ImportError:
+    from .compare_demo import (
+        COMPARE_GROUND_TRUTH,
+        COMPARE_PINNED_FACTS,
+        COMPARE_RECALL_PROMPT,
+        COMPARE_SECRET_PROMPT,
+        build_compare_verdict,
+        build_token_breakdown,
+        build_visual_comparison,
+        compare_script_steps,
+    )
     from .context_compression import (
         append_summary_block,
         build_payload_preview,
@@ -33,7 +53,7 @@ except ImportError:
         reset_compression,
         select_history_messages,
     )
-    from .quality_judge import quality_delta, safe_judge_answer
+    from .quality_judge import quality_delta, safe_judge_recall_answer
     from .token_counter import count_message_tokens, count_text_tokens, tokenizer_name
 
 
@@ -44,34 +64,6 @@ MAX_ARCHIVED_SUMMARIES = 8
 MAX_SUMMARY_CHARS = 900
 DEFAULT_MAX_STORED_MESSAGES = 200
 DEFAULT_MAX_STORED_TURNS = 200
-
-COMPARE_SECRET_PROMPT = (
-    "Запомни: кодовое слово BLUEFOX, любимый язык Kotlin, проект Orbit. "
-    "Ответь только «OK»."
-)
-COMPARE_RECALL_PROMPT = (
-    "Назови кодовое слово, любимый язык и проект из первого сообщения. "
-    "Кратко, по пунктам."
-)
-COMPARE_GROUND_TRUTH = {
-    "codeword": "BLUEFOX",
-    "language": "Kotlin",
-    "project": "Orbit",
-}
-COMPARE_FILLER_MESSAGES = [
-    "Расскажи про list comprehensions в Python.",
-    "А про generators?",
-    "Чем tuple отличается от list?",
-    "Что такое декоратор?",
-    "Как работает GIL?",
-    "Когда использовать asyncio?",
-    "Что такое dataclass?",
-    "Как устроен dict?",
-    "Что такое context manager?",
-    "Чем отличаются append и extend?",
-    "Что такое lambda?",
-    "Дай короткий итог по Python.",
-]
 
 
 def utc_now():
@@ -232,48 +224,51 @@ class ChatAgent:
         del client_id
         off_id = str(uuid.uuid4())
         on_id = str(uuid.uuid4())
-        script = [COMPARE_SECRET_PROMPT, *COMPARE_FILLER_MESSAGES, COMPARE_RECALL_PROMPT]
+        steps = compare_script_steps()
 
-        without = self._run_compare_track(off_id, script, compression=False)
-        with_track = self._run_compare_track(on_id, script, compression=True)
+        without = self._run_compare_track(off_id, steps, compression=False)
+        with_track = self._run_compare_track(on_id, steps, compression=True)
 
         self.memory_store.clear(off_id)
         self.memory_store.clear(on_id)
 
         without_score = without.get("judge", {}).get("score", 0.0)
         with_score = with_track.get("judge", {}).get("score", 0.0)
-        tokens_saved = (
-            without["tokens"]["cumulative_prompt_full_estimated"]
-            - with_track["tokens"]["cumulative_prompt_estimated"]
-            - with_track["tokens"]["cumulative_summarization_estimated"]
-        )
-
-        return {
-            "comparison": {
-                "without_compression": without,
-                "with_compression": with_track,
-                "tokens_saved": tokens_saved,
-                "quality_delta": quality_delta(without_score, with_score),
-            }
+        token_breakdown = build_token_breakdown(with_track, without)
+        comparison_body = {
+            "without_compression": without,
+            "with_compression": with_track,
+            "tokens_saved": token_breakdown["net_saved"],
+            "token_breakdown": token_breakdown,
+            "quality_delta": quality_delta(without_score, with_score),
         }
+        comparison_body["visual"] = build_visual_comparison(comparison_body)
+        comparison_body["verdict"] = build_compare_verdict(comparison_body)
+        return {"comparison": comparison_body}
 
-    def _run_compare_track(self, client_id, script, compression):
+    def _run_compare_track(self, client_id, steps, compression):
         self.memory_store.clear(client_id)
         memory = self.memory_store.load(client_id)
         ensure_compression_fields(memory)
         memory["compression"]["enabled"] = compression
+        memory["compression"]["pinned_facts"] = list(COMPARE_PINNED_FACTS)
         self.memory_store.save(client_id, memory)
 
         last_result = None
-        for index, message in enumerate(script):
+        for index, step in enumerate(steps):
             memory = self.memory_store.load(client_id)
-            run_judge = index == len(script) - 1
             last_result = self._complete_turn(
                 client_id,
                 memory,
-                message,
-                run_judge=run_judge,
+                step["user"],
+                run_judge=index == len(steps) - 1,
+                forced_reply=step.get("assistant"),
             )
+
+        memory = self.memory_store.load(client_id)
+        merge_count = len(memory.get("compression", {}).get("updates") or [])
+        last_turn = last_result.get("last_turn") or {}
+        history_meta = last_turn.get("history_meta") or {}
 
         return {
             "compression": compression,
@@ -281,9 +276,17 @@ class ChatAgent:
             "judge": last_result.get("judge") or {},
             "summary": last_result.get("history_summary", ""),
             "tokens": token_summary(last_result),
+            "merge_count": merge_count,
+            "script_turns": len(steps),
+            "replay": "canned",
+            "recall_payload": {
+                "messages_total": history_meta.get("messages_total", 0),
+                "messages_sent": history_meta.get("messages_sent", 0),
+                "summary_chars": len(last_result.get("history_summary") or ""),
+            },
         }
 
-    def _complete_turn(self, client_id, memory, user_message, run_judge=False):
+    def _complete_turn(self, client_id, memory, user_message, run_judge=False, forced_reply=None):
         ensure_compression_fields(memory)
         model = model_value()
         enabled = compression_enabled(memory)
@@ -317,10 +320,20 @@ class ChatAgent:
             for event in summarization_events
         )
 
-        completion = self.llm(messages=llm_messages, **agent_options())
-        reply = str(completion.get("content") or "").strip()
-        if not reply:
-            reply = "OpenRouter/model не вернул видимый текст."
+        if forced_reply is not None:
+            reply = str(forced_reply).strip()
+            completion = {
+                "content": reply,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+                "cost": None,
+            }
+        else:
+            completion = self.llm(messages=llm_messages, **agent_options())
+            reply = str(completion.get("content") or "").strip()
+            if not reply:
+                reply = "OpenRouter/model не вернул видимый текст."
 
         response_tokens_estimated = count_text_tokens(reply, model)
         response_tokens_actual = completion.get("completion_tokens")
@@ -345,7 +358,7 @@ class ChatAgent:
 
         judge = None
         if run_judge:
-            judge = safe_judge_answer(
+            judge = safe_judge_recall_answer(
                 self.llm,
                 user_message,
                 reply,
@@ -375,7 +388,8 @@ class ChatAgent:
             "turn_cost_estimated": turn_cost_estimated,
             "summarization_events": summarization_events,
             "history_meta": history_meta,
-            "model_called": True,
+            "model_called": forced_reply is None,
+            "used_canned_reply": forced_reply is not None,
         }
         if judge is not None:
             turn["judge"] = judge
@@ -464,10 +478,20 @@ def normalize_cumulative(value):
     return base
 
 
+def detect_legacy_session(memory):
+    for turn in memory.get("turns") or []:
+        if not isinstance(turn, dict):
+            continue
+        if turn.get("demo") or turn.get("memory_loss") or turn.get("context_compression_disabled"):
+            return True
+    return False
+
+
 def public_memory(memory):
     ensure_compression_fields(memory)
     last_turn = memory.get("turns", [])[-1] if memory.get("turns") else None
     config = compression_config()
+    legacy = detect_legacy_session(memory)
     return {
         "messages": deepcopy(memory.get("current_chat", {}).get("messages", [])),
         "profile": deepcopy(memory.get("profile", {})),
@@ -481,6 +505,13 @@ def public_memory(memory):
         "tokenizer": tokenizer_name(),
         "compression_config": config,
         "pricing": pricing_state(),
+        "legacy_session": legacy,
+        "legacy_hint": (
+            "В cookie осталась старая сессия (Day 8 overflow). Нажмите «Очистить», "
+            "чтобы не мешала демо сжатия."
+            if legacy
+            else ""
+        ),
     }
 
 

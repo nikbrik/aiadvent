@@ -12,11 +12,17 @@ try:
         FileMemoryStore,
     )
     from .context_compression import (
+        PINNED_FACTS_HEADER,
+        apply_pinned_facts,
         cap_summary,
         maybe_compress_history,
         select_history_messages,
     )
-    from .quality_judge import parse_judge_result, safe_judge_answer
+    from .quality_judge import (
+        evaluate_fact_recall,
+        parse_judge_result,
+        safe_judge_answer,
+    )
     from .server import app
     from .token_counter import count_message_tokens
 except ImportError:
@@ -27,11 +33,17 @@ except ImportError:
         FileMemoryStore,
     )
     from context_compression import (
+        PINNED_FACTS_HEADER,
+        apply_pinned_facts,
         cap_summary,
         maybe_compress_history,
         select_history_messages,
     )
-    from quality_judge import parse_judge_result, safe_judge_answer
+    from quality_judge import (
+        evaluate_fact_recall,
+        parse_judge_result,
+        safe_judge_answer,
+    )
     from server import app
     from token_counter import count_message_tokens
 
@@ -49,7 +61,7 @@ class RoutingFakeLLM:
 
         if "compress chat history" in system or "merge conversation history" in system:
             return {
-                "content": "Summary: BLUEFOX, Kotlin, Orbit mentioned earlier.",
+                "content": "Summary: filler topics covered in demo.",
                 "prompt_tokens": 50,
                 "completion_tokens": 12,
             }
@@ -66,8 +78,10 @@ class RoutingFakeLLM:
         user_content = messages[-1]["content"]
         if user_content == COMPARE_RECALL_PROMPT:
             return {"content": "BLUEFOX, Kotlin, Orbit", "prompt_tokens": 80, "completion_tokens": 6}
-        if user_content == COMPARE_SECRET_PROMPT:
+        if COMPARE_SECRET_PROMPT in user_content or user_content == COMPARE_SECRET_PROMPT:
             return {"content": "OK", "prompt_tokens": 20, "completion_tokens": 2}
+        if user_content.startswith("Одним коротким предложением:"):
+            return {"content": "Короткий ответ про Python.", "prompt_tokens": 30, "completion_tokens": 5}
         return {"content": "Короткий ответ про Python.", "prompt_tokens": 30, "completion_tokens": 5}
 
 
@@ -123,12 +137,51 @@ class ContextCompressionLogicTest(unittest.TestCase):
         llm = RoutingFakeLLM()
         events = maybe_compress_history(memory, llm, "test-model", {"model": "test-model"})
         self.assertGreaterEqual(len(events), 2)
-        marker = "Summary: BLUEFOX, Kotlin, Orbit mentioned earlier."
+        marker = "Summary: filler topics covered in demo."
         self.assertEqual(memory["history_summary"].count(marker), 1)
         self.assertEqual(memory["history_summary"], cap_summary(marker))
 
+    def test_pinned_facts_prepended_to_summary(self):
+        summary = apply_pinned_facts(
+            "Older dialog summary.",
+            ["codeword: BLUEFOX", "language: Kotlin"],
+        )
+        self.assertIn(PINNED_FACTS_HEADER, summary)
+        self.assertIn("BLUEFOX", summary)
+        self.assertIn("Older dialog summary.", summary)
+
+    def test_maybe_compress_history_keeps_pinned_facts(self):
+        memory = {
+            "current_chat": {
+                "messages": [
+                    {"role": "user" if index % 2 == 0 else "assistant", "content": f"turn-{index}"}
+                    for index in range(16)
+                ],
+            },
+            "history_summary": "",
+            "compression": {
+                "enabled": True,
+                "summarized_through": 0,
+                "updates": [],
+                "pinned_facts": ["codeword: BLUEFOX"],
+            },
+        }
+        llm = RoutingFakeLLM()
+        maybe_compress_history(memory, llm, "test-model", {"model": "test-model"})
+        self.assertIn(PINNED_FACTS_HEADER, memory["history_summary"])
+        self.assertIn("BLUEFOX", memory["history_summary"])
+
 
 class JudgeSafetyTest(unittest.TestCase):
+    def test_evaluate_fact_recall(self):
+        result = evaluate_fact_recall(
+            "Код BLUEFOX, язык Kotlin, проект Orbit",
+            {"codeword": "BLUEFOX", "language": "Kotlin", "project": "Orbit"},
+        )
+        self.assertTrue(result["passed"])
+        self.assertEqual(len(result["facts"]), 3)
+        self.assertTrue(all(item["found"] for item in result["facts"]))
+
     def test_safe_judge_answer_handles_invalid_json(self):
         class BadJudgeLLM:
             def __call__(self, messages, **options):
@@ -195,6 +248,27 @@ class ContextCompressionAgentTest(unittest.TestCase):
             self.assertIn("judge", comparison["without_compression"])
             self.assertIn("judge", comparison["with_compression"])
             self.assertIn("tokens_saved", comparison)
+            self.assertIn("token_breakdown", comparison)
+            self.assertIn("visual", comparison)
+            self.assertIn("verdict", comparison)
+            self.assertIn("net_saved", comparison["token_breakdown"])
+            self.assertIn("headline_before", comparison["visual"])
+            self.assertEqual(
+                comparison["tokens_saved"],
+                comparison["token_breakdown"]["net_saved"],
+            )
+            with_track = comparison["with_compression"]
+            without = comparison["without_compression"]
+            self.assertEqual(with_track["replay"], "canned")
+            self.assertGreaterEqual(with_track["script_turns"], 16)
+            self.assertGreater(with_track["merge_count"], 0)
+            self.assertIn("facts", with_track["judge"])
+            self.assertIn("recall_payload", with_track)
+            self.assertGreater(with_track["tokens"]["cumulative_net_saved"], 0)
+            self.assertEqual(
+                without["tokens"]["cumulative_prompt_estimated"],
+                with_track["tokens"]["cumulative_prompt_full_estimated"],
+            )
 
     def test_history_summary_persists_after_reload(self):
         with tempfile.TemporaryDirectory() as data_dir:
@@ -286,6 +360,9 @@ class CompressionApiTest(unittest.TestCase):
         self.assertIn("without_compression", comparison)
         self.assertIn("with_compression", comparison)
         self.assertIn("tokens_saved", comparison)
+        self.assertIn("token_breakdown", comparison)
+        self.assertIn("visual", comparison)
+        self.assertIn("verdict", comparison)
 
 
 if __name__ == "__main__":

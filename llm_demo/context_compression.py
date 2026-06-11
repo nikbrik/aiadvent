@@ -12,6 +12,7 @@ DEFAULT_KEEP_RECENT = 6
 DEFAULT_COMPRESS_EVERY = 10
 DEFAULT_MAX_SUMMARY_CHARS = 900
 SUMMARY_MARKER = "Previous conversation summary:"
+PINNED_FACTS_HEADER = "Pinned facts (never omit):"
 
 
 def compression_config():
@@ -29,6 +30,7 @@ def default_compression():
         "enabled": config["enabled_default"],
         "summarized_through": 0,
         "updates": [],
+        "pinned_facts": [],
     }
 
 
@@ -42,6 +44,7 @@ def ensure_compression_fields(memory):
     compression.setdefault("enabled", compression_config()["enabled_default"])
     compression.setdefault("summarized_through", 0)
     compression.setdefault("updates", [])
+    compression.setdefault("pinned_facts", [])
 
 
 def reset_compression(memory):
@@ -84,6 +87,7 @@ def build_merge_summary_messages(existing_summary, batch_messages):
         "instructions": (
             "Merge existing_summary and new_messages into one compact plain-text summary. "
             "Preserve codewords, names, numbers, languages, project names, and explicit decisions. "
+            "Never drop lines under 'Pinned facts (never omit):'. "
             "No markdown. Maximum 900 characters."
         ),
     }
@@ -114,6 +118,35 @@ def merge_summary_text(existing_summary, new_summary, max_chars=None):
 def cap_summary(text, max_chars=None):
     max_chars = max_chars or compression_config()["max_summary_chars"]
     return str(text or "").strip()[:max_chars]
+
+
+def pinned_facts_block(pinned_facts):
+    facts = [str(item).strip() for item in (pinned_facts or []) if str(item).strip()]
+    if not facts:
+        return ""
+    lines = "\n".join(f"- {item}" for item in facts)
+    return f"{PINNED_FACTS_HEADER}\n{lines}"
+
+
+def strip_pinned_facts_block(text):
+    text = str(text or "")
+    marker_index = text.find(PINNED_FACTS_HEADER)
+    if marker_index == -1:
+        return text.strip()
+    return text[:marker_index].strip()
+
+
+def apply_pinned_facts(summary, pinned_facts, max_chars=None):
+    max_chars = max_chars or compression_config()["max_summary_chars"]
+    block = pinned_facts_block(pinned_facts)
+    if not block:
+        return cap_summary(summary, max_chars)
+    body = strip_pinned_facts_block(summary)
+    if body:
+        merged = f"{block}\n\n{body}"
+    else:
+        merged = block
+    return cap_summary(merged, max_chars)
 
 
 def append_summary_block(system_prompt, history_summary):
@@ -156,6 +189,7 @@ def maybe_compress_history(memory, llm, model, llm_options):
     messages = chat_messages(memory)
     summarized_through = int(memory.get("compression", {}).get("summarized_through") or 0)
     compressible_end = len(messages) - config["keep_recent"]
+    pinned_facts = memory.get("compression", {}).get("pinned_facts") or []
     events = []
 
     while compressible_end - summarized_through >= config["compress_every"]:
@@ -175,13 +209,19 @@ def maybe_compress_history(memory, llm, model, llm_options):
                 raise ValueError("empty summary from model")
             prompt_tokens = completion.get("prompt_tokens")
             completion_tokens = completion.get("completion_tokens")
-            memory["history_summary"] = cap_summary(merged_text)
+            memory["history_summary"] = apply_pinned_facts(
+                cap_summary(merged_text),
+                pinned_facts,
+            )
         except Exception as exc:
             summarization_error = str(exc)
             merged_text = fallback_summary(batch)
             prompt_tokens = count_message_tokens(merge_messages, model)
             completion_tokens = count_text_tokens(merged_text, model)
-            memory["history_summary"] = merge_summary_text(existing_summary, merged_text)
+            memory["history_summary"] = apply_pinned_facts(
+                merge_summary_text(existing_summary, merged_text),
+                pinned_facts,
+            )
 
         summarized_through += config["compress_every"]
         memory["compression"]["summarized_through"] = summarized_through
