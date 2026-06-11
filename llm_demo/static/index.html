@@ -254,11 +254,53 @@
         return comparison.without_compression || comparison.without || null;
       }
 
-      function renderCompare(comparison) {
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function clearCompareResultsBox() {
+        compareResultsBox.className = "compare-results hidden";
+        compareResultsBox.replaceChildren();
+      }
+
+      function buildCompareMarkup(without, withTrack, comparison) {
+        const withoutScore = without.judge?.score != null ? without.judge.score.toFixed(2) : "—";
+        const withScore = withTrack.judge?.score != null ? withTrack.judge.score.toFixed(2) : "—";
+        const saved = formatNumber(comparison.tokens_saved);
+        const quality = formatQualityDelta(comparison.quality_delta);
+
+        return `
+          <div class="compare-grid">
+            <article class="compare-card">
+              <h4>Без сжатия</h4>
+              <p>Точность: <strong>${withoutScore}</strong> ${without.judge?.passed ? "✓" : "✗"}</p>
+              <p class="compare-note">${escapeHtml(without.judge?.note || "—")}</p>
+              <p>Токенов в запросах: ${formatNumber(without.tokens?.cumulative_prompt_full_estimated)}</p>
+              <p class="compare-answer">${escapeHtml(without.answer || "—")}</p>
+            </article>
+            <article class="compare-card">
+              <h4>Со сжатием</h4>
+              <p>Точность: <strong>${withScore}</strong> ${withTrack.judge?.passed ? "✓" : "✗"}</p>
+              <p class="compare-note">${escapeHtml(withTrack.judge?.note || "—")}</p>
+              <p>Токенов в запросах: ${formatNumber(withTrack.tokens?.cumulative_prompt_estimated)}</p>
+              <p>На сжатие резюме: ${formatNumber(withTrack.tokens?.cumulative_summarization_estimated)}</p>
+              <p class="compare-answer">${escapeHtml(withTrack.answer || "—")}</p>
+            </article>
+          </div>
+          <p class="compare-delta">Сэкономлено токенов: <strong>${saved}</strong> · ${quality}</p>`;
+      }
+
+      function renderCompare(comparison, options = {}) {
+        const { scroll = false, persist = false } = options;
+
         if (!comparison) {
           comparePanel.innerHTML = '<p class="empty-state">Нажмите «Сравнить», чтобы увидеть разницу.</p>';
-          compareResultsBox.className = "compare-results hidden";
-          compareResultsBox.replaceChildren();
+          clearCompareResultsBox();
           return;
         }
 
@@ -266,55 +308,31 @@
         const withTrack = pickCompareTrack(comparison, true);
         if (!without || !withTrack) {
           comparePanel.innerHTML = '<p class="empty-state">Не удалось разобрать ответ сервера.</p>';
+          clearCompareResultsBox();
+          try {
+            sessionStorage.removeItem(COMPARE_STORAGE_KEY);
+          } catch (storageError) {
+            console.warn("compare results not cleared", storageError);
+          }
           return;
         }
 
-        const withoutScore = without.judge?.score != null ? without.judge.score.toFixed(2) : "—";
-        const withScore = withTrack.judge?.score != null ? withTrack.judge.score.toFixed(2) : "—";
-        const saved = formatNumber(comparison.tokens_saved);
-        const quality = formatQualityDelta(comparison.quality_delta);
-
-        const html = `
-          <div class="compare-grid">
-            <article class="compare-card">
-              <h4>Без сжатия</h4>
-              <p>Точность: <strong>${withoutScore}</strong> ${without.judge?.passed ? "✓" : "✗"}</p>
-              <p class="compare-note">${without.judge?.note || "—"}</p>
-              <p>Токенов в запросах: ${formatNumber(without.tokens?.cumulative_prompt_full_estimated)}</p>
-              <p class="compare-answer">${escapeHtml(without.answer || "—")}</p>
-            </article>
-            <article class="compare-card">
-              <h4>Со сжатием</h4>
-              <p>Точность: <strong>${withScore}</strong> ${withTrack.judge?.passed ? "✓" : "✗"}</p>
-              <p class="compare-note">${withTrack.judge?.note || "—"}</p>
-              <p>Токенов в запросах: ${formatNumber(withTrack.tokens?.cumulative_prompt_estimated)}</p>
-              <p>На сжатие резюме: ${formatNumber(withTrack.tokens?.cumulative_summarization_estimated)}</p>
-              <p class="compare-answer">${escapeHtml(withTrack.answer || "—")}</p>
-            </article>
-          </div>
-          <p class="compare-delta">Сэкономлено токенов: <strong>${saved}</strong> · ${quality}</p>`;
-
-        comparePanel.innerHTML = html;
+        const markup = buildCompareMarkup(without, withTrack, comparison);
+        comparePanel.innerHTML = markup;
         compareResultsBox.className = "compare-results";
-        compareResultsBox.innerHTML = `
-          <h3>Результаты сравнения</h3>
-          ${html}`;
+        compareResultsBox.innerHTML = `<h3>Результаты сравнения</h3>${markup}`;
 
-        try {
-          sessionStorage.setItem(COMPARE_STORAGE_KEY, JSON.stringify(comparison));
-        } catch (storageError) {
-          console.warn("compare results not saved", storageError);
+        if (persist) {
+          try {
+            sessionStorage.setItem(COMPARE_STORAGE_KEY, JSON.stringify(comparison));
+          } catch (storageError) {
+            console.warn("compare results not saved", storageError);
+          }
         }
 
-        compareResultsBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        comparePanel.closest(".compare-section")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-
-      function escapeHtml(value) {
-        return String(value)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
+        if (scroll) {
+          compareResultsBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
       }
 
       function loadStoredCompare() {
@@ -324,6 +342,11 @@
           renderCompare(JSON.parse(raw));
         } catch (storageError) {
           console.warn("compare results not loaded", storageError);
+          try {
+            sessionStorage.removeItem(COMPARE_STORAGE_KEY);
+          } catch (removeError) {
+            console.warn("compare results not cleared", removeError);
+          }
         }
       }
 
@@ -445,7 +468,7 @@
           const response = await fetch("/api/demo/compression-compare", { method: "POST" });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "Сравнение не удалось");
-          renderCompare(data.comparison);
+          renderCompare(data.comparison, { scroll: true, persist: true });
           showAlert(
             `Готово: сэкономлено ${formatNumber(data.comparison?.tokens_saved)} токенов. Результаты — ниже в чате и справа.`,
             "ok",

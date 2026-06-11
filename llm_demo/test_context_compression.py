@@ -282,7 +282,10 @@ class CompressionApiTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
-        self.assertIn("comparison", data)
+        comparison = data["comparison"]
+        self.assertIn("without_compression", comparison)
+        self.assertIn("with_compression", comparison)
+        self.assertIn("tokens_saved", comparison)
 
 
 if __name__ == "__main__":

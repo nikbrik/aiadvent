@@ -240,8 +240,8 @@ class ChatAgent:
         self.memory_store.clear(off_id)
         self.memory_store.clear(on_id)
 
-        without_score = without["judge"]["score"]
-        with_score = with_track["judge"]["score"]
+        without_score = without.get("judge", {}).get("score", 0.0)
+        with_score = with_track.get("judge", {}).get("score", 0.0)
         tokens_saved = (
             without["tokens"]["cumulative_prompt_full_estimated"]
             - with_track["tokens"]["cumulative_prompt_estimated"]
