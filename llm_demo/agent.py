@@ -250,8 +250,8 @@ class ChatAgent:
 
         return {
             "comparison": {
-                "without": without,
-                "with": with_track,
+                "without_compression": without,
+                "with_compression": with_track,
                 "tokens_saved": tokens_saved,
                 "quality_delta": quality_delta(without_score, with_score),
             }

@@ -12,17 +12,17 @@
         <p class="eyebrow">AI Advent · День 9</p>
         <h1>Сжатие истории диалога</h1>
         <p class="lead">
-          Агент хранит последние N сообщений как есть, а старые сворачивает в summary каждые 10 записей.
-          Сравните качество ответов и расход токенов со сжатием и без.
+          Агент хранит последние 6 сообщений целиком, а более старые сжимает в краткое резюме
+          (каждые 10 сообщений). Можно сравнить качество ответов и расход токенов со сжатием и без.
         </p>
       </section>
 
       <section class="assignment-panel panel">
-        <h2>Задание</h2>
+        <h2>Как это работает</h2>
         <ul class="assignment-list">
-          <li>Последние <strong>6</strong> сообщений в prompt verbatim</li>
-          <li>Старше — <strong>summary</strong> в system prompt (батч каждые 10)</li>
-          <li>Кнопка «Сравнить сжатие» — ephemeral A/B + LLM-judge</li>
+          <li>Последние <strong>6</strong> сообщений уходят в модель без изменений</li>
+          <li>Более ранние заменяются <strong>резюме</strong> (обновляется каждые 10 сообщений)</li>
+          <li>Кнопка «Сравнить» прогоняет один сценарий дважды — со сжатием и без</li>
         </ul>
       </section>
 
@@ -46,63 +46,64 @@
             </label>
             <div class="actions">
               <button id="send-button" class="primary-button" type="submit">Отправить</button>
-              <button id="compare-button" class="demo-button" type="button">Сравнить сжатие</button>
-              <button id="clear-button" class="secondary-button" type="button">Clear</button>
+              <button id="compare-button" class="demo-button" type="button">Сравнить</button>
+              <button id="clear-button" class="secondary-button" type="button">Очистить</button>
             </div>
           </form>
 
           <div id="alert" class="alert hidden" role="alert"></div>
+          <div id="compare-results" class="compare-results hidden" aria-live="polite"></div>
           <details id="payload-details" class="payload-details">
-            <summary>Payload preview (что ушло в OpenRouter)</summary>
+            <summary>Что именно отправилось модели</summary>
             <pre id="payload-preview" class="payload-preview"></pre>
           </details>
-          <div id="metadata" class="metadata">Метаданные появятся после ответа.</div>
+          <div id="metadata" class="metadata">Служебная информация об ответе появится здесь.</div>
         </section>
 
         <aside class="panel stats-panel">
           <div class="panel-head">
-            <h2>Compression & tokens</h2>
+            <h2>Токены и сжатие</h2>
           </div>
 
           <section class="stats-section highlight-section">
-            <h3>Текущий ход</h3>
+            <h3>Последний обмен</h3>
             <div id="token-triple" class="token-triple"></div>
           </section>
 
+          <section class="stats-section highlight-section compare-section">
+            <h3>Сравнение: со сжатием и без</h3>
+            <div id="compare-panel" class="compare-panel"></div>
+          </section>
+
           <section class="stats-section">
-            <h3>History summary</h3>
+            <h3>Резюме старых сообщений</h3>
             <p id="history-summary" class="memory-text">Пока пусто.</p>
             <p id="compression-meta" class="meta-line"></p>
             <ul id="compression-journal" class="memory-list"></ul>
           </section>
 
           <section class="stats-section">
-            <h3>Сравнение A/B</h3>
-            <div id="compare-panel" class="compare-panel"></div>
-          </section>
-
-          <section class="stats-section">
-            <h3>Net savings</h3>
+            <h3>Экономия токенов</h3>
             <dl id="net-savings" class="stats-grid compact-grid"></dl>
           </section>
 
           <section class="stats-section">
-            <h3>Cumulative</h3>
+            <h3>Итого за диалог</h3>
             <dl id="cumulative" class="stats-grid compact-grid"></dl>
           </section>
 
           <section class="stats-section">
-            <h3>История ходов</h3>
+            <h3>История обменов</h3>
             <div class="table-wrap">
               <table id="turn-table" class="turn-table">
                 <thead>
                   <tr>
-                    <th>#</th>
-                    <th>сжатие</th>
-                    <th>hist full</th>
-                    <th>hist sent</th>
-                    <th>prompt</th>
-                    <th>saved</th>
+                    <th>№</th>
+                    <th>Сжатие</th>
+                    <th>Вся история</th>
+                    <th>В запросе</th>
+                    <th>Запрос</th>
+                    <th>Сэкономлено</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -111,7 +112,7 @@
           </section>
 
           <section class="stats-section">
-            <h3>Конфиг</h3>
+            <h3>Настройки</h3>
             <dl id="config" class="stats-grid compact-grid"></dl>
           </section>
         </aside>
@@ -119,6 +120,7 @@
     </main>
 
     <script>
+      const COMPARE_STORAGE_KEY = "day9_compare_results";
       const form = document.querySelector("#chat-form");
       const messageInput = document.querySelector("#message");
       const compressionToggle = document.querySelector("#compression-enabled");
@@ -126,6 +128,7 @@
       const statusBox = document.querySelector("#status");
       const metadataBox = document.querySelector("#metadata");
       const alertBox = document.querySelector("#alert");
+      const compareResultsBox = document.querySelector("#compare-results");
       const payloadPreview = document.querySelector("#payload-preview");
       const sendButton = document.querySelector("#send-button");
       const compareButton = document.querySelector("#compare-button");
@@ -160,6 +163,16 @@
         }
         alertBox.className = `alert ${mode}`;
         alertBox.textContent = text;
+      }
+
+      const QUALITY_DELTA_LABELS = {
+        with_scored_higher: "со сжатием ответили точнее",
+        with_scored_lower: "со сжатием ответили хуже",
+        similar: "качество примерно одинаковое",
+      };
+
+      function formatQualityDelta(value) {
+        return QUALITY_DELTA_LABELS[value] || value || "—";
       }
 
       function formatNumber(value) {
@@ -207,9 +220,9 @@
           return;
         }
         const cards = [
-          { label: "Запрос", value: turn.current_request_tokens },
-          { label: "История (sent)", value: turn.history_tokens_sent ?? turn.history_tokens },
-          { label: "Ответ est.", value: turn.response_tokens_estimated },
+          { label: "Ваше сообщение", value: turn.current_request_tokens },
+          { label: "История в запросе", value: turn.history_tokens_sent ?? turn.history_tokens },
+          { label: "Ответ модели", value: turn.response_tokens_estimated },
         ];
         tokenTripleBox.replaceChildren(...cards.map((card) => {
           const item = document.createElement("article");
@@ -223,60 +236,116 @@
         historySummaryBox.textContent = data.history_summary || "Пока пусто.";
         const comp = data.compression || {};
         compressionMetaBox.textContent =
-          `Свернуто: ${comp.summarized_through || 0} / ${data.messages?.length || 0} · updates: ${comp.updates?.length || 0}`;
+          `Сжато сообщений: ${comp.summarized_through || 0} из ${data.messages?.length || 0} · обновлений резюме: ${comp.updates?.length || 0}`;
         compressionJournal.replaceChildren(...(comp.updates || []).map((item) => {
           const li = document.createElement("li");
-          li.textContent = `#${item.summarized_through}: +${item.batch_size} → ${item.summary_chars} chars` +
-            (item.used_fallback ? " (fallback)" : "");
+          li.textContent =
+            `После ${item.summarized_through} сообщ.: сжали ${item.batch_size}, резюме ${item.summary_chars} симв.` +
+            (item.used_fallback ? " (упрощённый режим)" : "");
           return li;
         }));
       }
 
+      function pickCompareTrack(comparison, compressed) {
+        if (!comparison) return null;
+        if (compressed) {
+          return comparison.with_compression || comparison.with || null;
+        }
+        return comparison.without_compression || comparison.without || null;
+      }
+
       function renderCompare(comparison) {
         if (!comparison) {
-          comparePanel.innerHTML = '<p class="empty-state">Нажмите «Сравнить сжатие».</p>';
+          comparePanel.innerHTML = '<p class="empty-state">Нажмите «Сравнить», чтобы увидеть разницу.</p>';
+          compareResultsBox.className = "compare-results hidden";
+          compareResultsBox.replaceChildren();
           return;
         }
-        const without = comparison.without;
-        const withTrack = comparison.with;
-        comparePanel.innerHTML = `
+
+        const without = pickCompareTrack(comparison, false);
+        const withTrack = pickCompareTrack(comparison, true);
+        if (!without || !withTrack) {
+          comparePanel.innerHTML = '<p class="empty-state">Не удалось разобрать ответ сервера.</p>';
+          return;
+        }
+
+        const withoutScore = without.judge?.score != null ? without.judge.score.toFixed(2) : "—";
+        const withScore = withTrack.judge?.score != null ? withTrack.judge.score.toFixed(2) : "—";
+        const saved = formatNumber(comparison.tokens_saved);
+        const quality = formatQualityDelta(comparison.quality_delta);
+
+        const html = `
           <div class="compare-grid">
-            <article>
+            <article class="compare-card">
               <h4>Без сжатия</h4>
-              <p>Judge: ${without.judge?.score?.toFixed(2) ?? "—"} ${without.judge?.passed ? "✓" : "✗"}</p>
-              <p class="compare-note">${without.judge?.note || ""}</p>
-              <p>Prompt cum.: ${formatNumber(without.tokens?.cumulative_prompt_full_estimated)}</p>
+              <p>Точность: <strong>${withoutScore}</strong> ${without.judge?.passed ? "✓" : "✗"}</p>
+              <p class="compare-note">${without.judge?.note || "—"}</p>
+              <p>Токенов в запросах: ${formatNumber(without.tokens?.cumulative_prompt_full_estimated)}</p>
+              <p class="compare-answer">${escapeHtml(without.answer || "—")}</p>
             </article>
-            <article>
+            <article class="compare-card">
               <h4>Со сжатием</h4>
-              <p>Judge: ${withTrack.judge?.score?.toFixed(2) ?? "—"} ${withTrack.judge?.passed ? "✓" : "✗"}</p>
-              <p class="compare-note">${withTrack.judge?.note || ""}</p>
-              <p>Prompt cum.: ${formatNumber(withTrack.tokens?.cumulative_prompt_estimated)}</p>
-              <p>Summarize: ${formatNumber(withTrack.tokens?.cumulative_summarization_estimated)}</p>
+              <p>Точность: <strong>${withScore}</strong> ${withTrack.judge?.passed ? "✓" : "✗"}</p>
+              <p class="compare-note">${withTrack.judge?.note || "—"}</p>
+              <p>Токенов в запросах: ${formatNumber(withTrack.tokens?.cumulative_prompt_estimated)}</p>
+              <p>На сжатие резюме: ${formatNumber(withTrack.tokens?.cumulative_summarization_estimated)}</p>
+              <p class="compare-answer">${escapeHtml(withTrack.answer || "—")}</p>
             </article>
           </div>
-          <p class="compare-delta">Net saved: ${formatNumber(comparison.tokens_saved)} · ${comparison.quality_delta}</p>`;
+          <p class="compare-delta">Сэкономлено токенов: <strong>${saved}</strong> · ${quality}</p>`;
+
+        comparePanel.innerHTML = html;
+        compareResultsBox.className = "compare-results";
+        compareResultsBox.innerHTML = `
+          <h3>Результаты сравнения</h3>
+          ${html}`;
+
+        try {
+          sessionStorage.setItem(COMPARE_STORAGE_KEY, JSON.stringify(comparison));
+        } catch (storageError) {
+          console.warn("compare results not saved", storageError);
+        }
+
+        compareResultsBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        comparePanel.closest(".compare-section")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function loadStoredCompare() {
+        try {
+          const raw = sessionStorage.getItem(COMPARE_STORAGE_KEY);
+          if (!raw) return;
+          renderCompare(JSON.parse(raw));
+        } catch (storageError) {
+          console.warn("compare results not loaded", storageError);
+        }
       }
 
       function renderNetSavings(data) {
         const turn = data.current_turn || data.last_turn;
         const cumulative = data.cumulative || {};
         renderDefinitionList(netSavingsBox, [
-          ["Turn net saved", formatNumber(turn?.tokens_net_saved)],
-          ["Cumulative net saved", formatNumber(cumulative.tokens_net_saved)],
-          ["Summarization overhead", formatNumber(cumulative.summarization_tokens_estimated)],
+          ["За этот обмен", formatNumber(turn?.tokens_net_saved)],
+          ["За весь диалог", formatNumber(cumulative.tokens_net_saved)],
+          ["Потрачено на сжатие", formatNumber(cumulative.summarization_tokens_estimated)],
         ]);
       }
 
       function renderCumulative(data) {
         const c = data.cumulative || {};
         renderDefinitionList(cumulativeBox, [
-          ["Prompt est.", formatNumber(c.prompt_tokens_estimated)],
-          ["Prompt full est.", formatNumber(c.prompt_tokens_full_estimated)],
-          ["Summarize est.", formatNumber(c.summarization_tokens_estimated)],
-          ["Response est.", formatNumber(c.response_tokens_estimated)],
-          ["Total est. (incl. summarize)", formatNumber(c.total_tokens_estimated)],
-          ["Cost actual", formatCost(c.cost_actual)],
+          ["Запросы (оценка)", formatNumber(c.prompt_tokens_estimated)],
+          ["Запросы без сжатия (оценка)", formatNumber(c.prompt_tokens_full_estimated)],
+          ["Сжатие резюме (оценка)", formatNumber(c.summarization_tokens_estimated)],
+          ["Ответы (оценка)", formatNumber(c.response_tokens_estimated)],
+          ["Всего (оценка)", formatNumber(c.total_tokens_estimated)],
+          ["Стоимость (факт)", formatCost(c.cost_actual)],
         ]);
       }
 
@@ -289,7 +358,7 @@
           const row = document.createElement("tr");
           row.innerHTML = `
             <td>${turn.turn}</td>
-            <td>${turn.compression_enabled ? "on" : "off"}</td>
+            <td>${turn.compression_enabled ? "да" : "нет"}</td>
             <td>${formatNumber(turn.history_tokens_full)}</td>
             <td>${formatNumber(turn.history_tokens_sent)}</td>
             <td>${formatNumber(turn.prompt_tokens_estimated)}</td>
@@ -301,10 +370,10 @@
       function renderConfig(data) {
         const cfg = data.compression_config || {};
         renderDefinitionList(configBox, [
-          ["Model", data.model || "—"],
-          ["Tokenizer", data.tokenizer || "—"],
-          ["Keep recent", String(cfg.keep_recent ?? "—")],
-          ["Compress every", String(cfg.compress_every ?? "—")],
+          ["Модель", data.model || "—"],
+          ["Счётчик токенов", data.tokenizer || "—"],
+          ["Хранить последние сообщений", String(cfg.keep_recent ?? "—")],
+          ["Сжимать каждые N сообщений", String(cfg.compress_every ?? "—")],
         ]);
       }
 
@@ -356,7 +425,7 @@
             }),
           });
           const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Request failed");
+          if (!response.ok) throw new Error(data.error || "Не удалось отправить сообщение");
           messageInput.value = "";
           renderState(data);
           setStatus("Готово", "ok");
@@ -370,14 +439,18 @@
 
       compareButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("A/B compare…", "busy");
-        showAlert("Compare demo делает много вызовов OpenRouter.", "warn");
+        setStatus("Сравниваем…", "busy");
+        showAlert("Сценарий сравнения делает много запросов к OpenRouter и тратит баланс ключа.", "warn");
         try {
           const response = await fetch("/api/demo/compression-compare", { method: "POST" });
           const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Compare failed");
+          if (!response.ok) throw new Error(data.error || "Сравнение не удалось");
           renderCompare(data.comparison);
-          setStatus("Compare готов", "ok");
+          showAlert(
+            `Готово: сэкономлено ${formatNumber(data.comparison?.tokens_saved)} токенов. Результаты — ниже в чате и справа.`,
+            "ok",
+          );
+          setStatus("Сравнение готово", "ok");
         } catch (error) {
           showAlert(error.message, "error");
           setStatus("Ошибка", "error");
@@ -390,6 +463,7 @@
         setBusy(true);
         try {
           await fetch("/api/chat", { method: "DELETE" });
+          sessionStorage.removeItem(COMPARE_STORAGE_KEY);
           renderCompare(null);
           showAlert("");
           await loadState();
@@ -399,7 +473,9 @@
         }
       });
 
-      loadState().catch((error) => showAlert(error.message, "error"));
+      loadState()
+        .then(() => loadStoredCompare())
+        .catch((error) => showAlert(error.message, "error"));
     </script>
   </body>
 </html>

@@ -190,10 +190,10 @@ class ContextCompressionAgentTest(unittest.TestCase):
             result = agent.run_demo_compression_compare(CLIENT_ID)
 
             comparison = result["comparison"]
-            self.assertIn("without", comparison)
-            self.assertIn("with", comparison)
-            self.assertIn("judge", comparison["without"])
-            self.assertIn("judge", comparison["with"])
+            self.assertIn("without_compression", comparison)
+            self.assertIn("with_compression", comparison)
+            self.assertIn("judge", comparison["without_compression"])
+            self.assertIn("judge", comparison["with_compression"])
             self.assertIn("tokens_saved", comparison)
 
     def test_history_summary_persists_after_reload(self):
