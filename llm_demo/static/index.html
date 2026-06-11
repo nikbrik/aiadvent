@@ -3,50 +3,27 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AI Advent Day 8 — Токены</title>
+    <title>AI Advent Day 9 — Сжатие истории</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 8</p>
-        <h1>Работа с токенами</h1>
+        <p class="eyebrow">AI Advent · День 9</p>
+        <h1>Сжатие истории диалога</h1>
         <p class="lead">
-          Агент считает токены текущего запроса, всей истории и ответа модели — до и после вызова OpenRouter.
-          Сравните короткий и длинный диалог, посмотрите overflow — и отдельно сценарий «потеря памяти», когда модель отвечает, но забывает начало.
+          Агент хранит последние N сообщений как есть, а старые сворачивает в summary каждые 10 записей.
+          Сравните качество ответов и расход токенов со сжатием и без.
         </p>
       </section>
 
       <section class="assignment-panel panel">
-        <h2>Задание на экране</h2>
-        <div class="assignment-grid">
-          <article class="assignment-card">
-            <h3>Считаем</h3>
-            <ul>
-              <li>токены <strong>текущего запроса</strong></li>
-              <li>токены <strong>истории диалога</strong> в prompt</li>
-              <li>токены <strong>ответа модели</strong></li>
-            </ul>
-          </article>
-          <article class="assignment-card">
-            <h3>Сравниваем</h3>
-            <ol class="demo-steps">
-              <li><button type="button" class="link-button" data-run="short">Короткий</button> — мало tokens/cost</li>
-              <li><button type="button" class="link-button" data-run="long">Длинный</button> — history и cost растут</li>
-              <li><button type="button" class="link-button" data-run="preflight">Переполнение (local)</button> — блок до API</li>
-              <li><button type="button" class="link-button" data-run="provider">Переполнение (OpenRouter)</button> — ответ провайдера</li>
-              <li><button type="button" class="link-button" data-run="memory">Потеря памяти</button> — модель «забывает» начало</li>
-            </ol>
-          </article>
-          <article class="assignment-card">
-            <h3>Смотрим</h3>
-            <ul>
-              <li>рост tokens/cost в таблице ходов</li>
-              <li>prompt vs лимит контекста</li>
-              <li>что именно сломалось при overflow</li>
-            </ul>
-          </article>
-        </div>
+        <h2>Задание</h2>
+        <ul class="assignment-list">
+          <li>Последние <strong>6</strong> сообщений в prompt verbatim</li>
+          <li>Старше — <strong>summary</strong> в system prompt (батч каждые 10)</li>
+          <li>Кнопка «Сравнить сжатие» — ephemeral A/B + LLM-judge</li>
+        </ul>
       </section>
 
       <section class="workspace">
@@ -59,63 +36,59 @@
           <div id="messages" class="messages" aria-live="polite"></div>
 
           <form id="chat-form" class="composer">
+            <label class="field compression-toggle">
+              <input id="compression-enabled" type="checkbox" checked>
+              <span>Сжатие истории включено</span>
+            </label>
             <label class="field">
               <span>Сообщение</span>
-              <textarea id="message" rows="3" required placeholder="Или запустите сценарий кнопками ниже…"></textarea>
+              <textarea id="message" rows="3" required placeholder="Напишите агенту…"></textarea>
             </label>
             <div class="actions">
               <button id="send-button" class="primary-button" type="submit">Отправить</button>
-              <button id="short-button" class="demo-button" type="button">① Короткий</button>
-              <button id="long-button" class="demo-button" type="button">② Длинный</button>
-              <button id="overflow-button" class="warn-button" type="button">③ Local overflow</button>
-              <button id="provider-overflow-button" class="danger-button" type="button">④ OpenRouter</button>
-              <button id="memory-loss-button" class="memory-button" type="button">⑤ Потеря памяти</button>
+              <button id="compare-button" class="demo-button" type="button">Сравнить сжатие</button>
               <button id="clear-button" class="secondary-button" type="button">Clear</button>
             </div>
           </form>
 
           <div id="alert" class="alert hidden" role="alert"></div>
-          <div id="lesson" class="lesson hidden"></div>
+          <details id="payload-details" class="payload-details">
+            <summary>Payload preview (что ушло в OpenRouter)</summary>
+            <pre id="payload-preview" class="payload-preview"></pre>
+          </details>
           <div id="metadata" class="metadata">Метаданные появятся после ответа.</div>
         </section>
 
         <aside class="panel stats-panel">
           <div class="panel-head">
-            <h2>Token accounting</h2>
+            <h2>Compression & tokens</h2>
           </div>
 
           <section class="stats-section highlight-section">
-            <h3>Три счётчика задания · текущий ход</h3>
+            <h3>Текущий ход</h3>
             <div id="token-triple" class="token-triple"></div>
           </section>
 
           <section class="stats-section">
-            <h3>Короткий vs длинный</h3>
+            <h3>History summary</h3>
+            <p id="history-summary" class="memory-text">Пока пусто.</p>
+            <p id="compression-meta" class="meta-line"></p>
+            <ul id="compression-journal" class="memory-list"></ul>
+          </section>
+
+          <section class="stats-section">
+            <h3>Сравнение A/B</h3>
             <div id="compare-panel" class="compare-panel"></div>
           </section>
 
           <section class="stats-section">
-            <h3>Рост по диалогу</h3>
-            <div id="growth-chart" class="growth-chart"></div>
+            <h3>Net savings</h3>
+            <dl id="net-savings" class="stats-grid compact-grid"></dl>
+          </section>
+
+          <section class="stats-section">
+            <h3>Cumulative</h3>
             <dl id="cumulative" class="stats-grid compact-grid"></dl>
-          </section>
-
-          <section class="stats-section">
-            <h3>Prompt vs limit</h3>
-            <div class="limit-bar-wrap">
-              <div id="limit-bar" class="limit-bar"></div>
-            </div>
-            <dl id="prompt-usage" class="stats-grid compact-grid"></dl>
-          </section>
-
-          <section class="stats-section">
-            <h3>Что сломалось</h3>
-            <div id="breakage-panel" class="breakage-panel"></div>
-          </section>
-
-          <section class="stats-section">
-            <h3>Детали хода</h3>
-            <dl id="current-turn" class="stats-grid compact-grid"></dl>
           </section>
 
           <section class="stats-section">
@@ -125,12 +98,11 @@
                 <thead>
                   <tr>
                     <th>#</th>
-                    <th>status</th>
-                    <th>запрос</th>
-                    <th>история</th>
+                    <th>сжатие</th>
+                    <th>hist full</th>
+                    <th>hist sent</th>
                     <th>prompt</th>
-                    <th>ответ</th>
-                    <th>cost</th>
+                    <th>saved</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -147,54 +119,32 @@
     </main>
 
     <script>
-      const COMPARE_KEY = "day8_demo_snapshots";
-
       const form = document.querySelector("#chat-form");
       const messageInput = document.querySelector("#message");
+      const compressionToggle = document.querySelector("#compression-enabled");
       const messagesBox = document.querySelector("#messages");
       const statusBox = document.querySelector("#status");
       const metadataBox = document.querySelector("#metadata");
       const alertBox = document.querySelector("#alert");
-      const lessonBox = document.querySelector("#lesson");
+      const payloadPreview = document.querySelector("#payload-preview");
       const sendButton = document.querySelector("#send-button");
-      const shortButton = document.querySelector("#short-button");
-      const longButton = document.querySelector("#long-button");
-      const overflowButton = document.querySelector("#overflow-button");
-      const providerOverflowButton = document.querySelector("#provider-overflow-button");
-      const memoryLossButton = document.querySelector("#memory-loss-button");
+      const compareButton = document.querySelector("#compare-button");
       const clearButton = document.querySelector("#clear-button");
       const tokenTripleBox = document.querySelector("#token-triple");
+      const historySummaryBox = document.querySelector("#history-summary");
+      const compressionMetaBox = document.querySelector("#compression-meta");
+      const compressionJournal = document.querySelector("#compression-journal");
       const comparePanel = document.querySelector("#compare-panel");
-      const growthChartBox = document.querySelector("#growth-chart");
-      const breakagePanel = document.querySelector("#breakage-panel");
-      const currentTurnBox = document.querySelector("#current-turn");
-      const promptUsageBox = document.querySelector("#prompt-usage");
+      const netSavingsBox = document.querySelector("#net-savings");
       const cumulativeBox = document.querySelector("#cumulative");
       const configBox = document.querySelector("#config");
-      const limitBar = document.querySelector("#limit-bar");
       const turnTableBody = document.querySelector("#turn-table tbody");
-
-      const actionButtons = [sendButton, shortButton, longButton, overflowButton, providerOverflowButton, memoryLossButton, clearButton];
-      const demoRunners = {
-        short: () => shortButton.click(),
-        long: () => longButton.click(),
-        preflight: () => overflowButton.click(),
-        provider: () => providerOverflowButton.click(),
-        memory: () => memoryLossButton.click(),
-      };
-
-      document.querySelectorAll("[data-run]").forEach((button) => {
-        button.addEventListener("click", () => {
-          const run = demoRunners[button.dataset.run];
-          if (run) run();
-        });
-      });
+      const actionButtons = [sendButton, compareButton, clearButton];
 
       function setBusy(isBusy) {
-        actionButtons.forEach((button) => {
-          button.disabled = isBusy;
-        });
+        actionButtons.forEach((button) => { button.disabled = isBusy; });
         messageInput.disabled = isBusy;
+        compressionToggle.disabled = isBusy;
       }
 
       function setStatus(text, mode = "") {
@@ -212,48 +162,28 @@
         alertBox.textContent = text;
       }
 
-      function showLesson(text, mode = "info") {
-        if (!text) {
-          lessonBox.className = "lesson hidden";
-          lessonBox.textContent = "";
-          return;
-        }
-        lessonBox.className = `lesson ${mode}`;
-        lessonBox.textContent = text;
-      }
-
       function formatNumber(value) {
         if (value === null || value === undefined || value === "") return "—";
         return Number(value).toLocaleString("ru-RU");
       }
 
-      function formatCost(value, label) {
+      function formatCost(value) {
         if (value === null || value === undefined) return "—";
-        return `$${Number(value).toFixed(6)} (${label})`;
+        return `$${Number(value).toFixed(6)}`;
       }
 
       function renderMessages(messages) {
-        if (!messages || messages.length === 0) {
-          messagesBox.innerHTML = '<p class="empty-state">Сообщений пока нет. Начните с кнопки «① Короткий».</p>';
+        if (!messages?.length) {
+          messagesBox.innerHTML = '<p class="empty-state">Сообщений пока нет.</p>';
           return;
         }
-
         messagesBox.replaceChildren(...messages.map((message) => {
           const item = document.createElement("article");
           item.className = `message message-${message.role}`;
-
           const role = document.createElement("strong");
           role.textContent = message.role === "user" ? "Вы" : "Агент";
-
           const content = document.createElement("p");
           content.textContent = message.content;
-          if (message.content_truncated) {
-            const note = document.createElement("small");
-            note.className = "truncate-note";
-            note.textContent = ` (в UI показано начало, всего ${message.content_length} символов)`;
-            content.append(note);
-          }
-
           item.append(role, content);
           return item;
         }));
@@ -273,560 +203,184 @@
       function renderTokenTriple(data) {
         const turn = data.current_turn || data.last_turn;
         if (!turn) {
-          tokenTripleBox.innerHTML = '<p class="empty-state">Запустите сценарий, чтобы увидеть три счётчика.</p>';
+          tokenTripleBox.innerHTML = '<p class="empty-state">Отправьте сообщение.</p>';
           return;
         }
-
         const cards = [
-          {
-            label: "Текущий запрос",
-            estimated: turn.current_request_tokens,
-            actual: null,
-            hint: "Новое user-сообщение",
-          },
-          {
-            label: "История диалога",
-            estimated: turn.history_tokens,
-            actual: null,
-            hint: "Прошлые user/assistant в prompt",
-          },
-          {
-            label: "Ответ модели",
-            estimated: turn.response_tokens_estimated,
-            actual: turn.response_tokens_actual,
-            hint: turn.model_called ? "После OpenRouter" : "Модель не вызывалась",
-          },
+          { label: "Запрос", value: turn.current_request_tokens },
+          { label: "История (sent)", value: turn.history_tokens_sent ?? turn.history_tokens },
+          { label: "Ответ est.", value: turn.response_tokens_estimated },
         ];
-
         tokenTripleBox.replaceChildren(...cards.map((card) => {
           const item = document.createElement("article");
           item.className = "token-card";
-
-          const title = document.createElement("h4");
-          title.textContent = card.label;
-
-          const est = document.createElement("p");
-          est.className = "token-value";
-          est.textContent = formatNumber(card.estimated);
-
-          const sub = document.createElement("p");
-          sub.className = "token-sub";
-          if (card.actual != null) {
-            sub.textContent = `actual: ${formatNumber(card.actual)} · ${card.hint}`;
-          } else {
-            sub.textContent = `estimated · ${card.hint}`;
-          }
-
-          item.append(title, est, sub);
+          item.innerHTML = `<h4>${card.label}</h4><p class="token-value">${formatNumber(card.value)}</p>`;
           return item;
         }));
       }
 
-      function snapshotFromData(data) {
-        return {
-          turns: data.turns?.length || 0,
-          history: data.current_turn?.history_tokens ?? 0,
-          prompt: data.current_turn?.prompt_tokens_actual ?? data.current_turn?.prompt_tokens_estimated ?? 0,
-          response: data.current_turn?.response_tokens_actual ?? data.current_turn?.response_tokens_estimated ?? 0,
-          total: data.cumulative?.total_tokens_actual ?? data.cumulative?.total_tokens_estimated ?? 0,
-          cost: data.cumulative?.cost_actual ?? data.cumulative?.cost_estimated ?? 0,
-        };
-      }
-
-      function saveCompareSnapshot(label, data) {
-        const stored = JSON.parse(sessionStorage.getItem(COMPARE_KEY) || "{}");
-        stored[label] = snapshotFromData(data);
-        sessionStorage.setItem(COMPARE_KEY, JSON.stringify(stored));
-        renderComparePanel(stored);
-      }
-
-      function renderComparePanel(stored) {
-        const short = stored?.short;
-        const long = stored?.long;
-
-        if (!short && !long) {
-          comparePanel.innerHTML = '<p class="empty-state">Запустите «① Короткий», затем «② Длинный» — здесь появится сравнение.</p>';
-          return;
-        }
-
-        if (!short || !long) {
-          comparePanel.innerHTML = `<p class="empty-state">${short ? "Есть короткий. Теперь нажмите «② Длинный»." : "Есть длинный. Сначала нажмите «① Короткий» для сравнения."}</p>`;
-          return;
-        }
-
-        const rows = [
-          ["Ходов", short.turns, long.turns],
-          ["History tokens", short.history, long.history],
-          ["Prompt tokens", short.prompt, long.prompt],
-          ["Response tokens", short.response, long.response],
-          ["Total tokens", short.total, long.total],
-          ["Cost ($)", short.cost.toFixed(6), long.cost.toFixed(6)],
-        ];
-
-        comparePanel.replaceChildren(...rows.map(([label, a, b]) => {
-          const row = document.createElement("div");
-          row.className = "compare-row";
-
-          const name = document.createElement("span");
-          name.className = "compare-label";
-          name.textContent = label;
-
-          const shortVal = document.createElement("span");
-          shortVal.className = "compare-short";
-          shortVal.textContent = typeof a === "number" ? formatNumber(a) : a;
-
-          const longVal = document.createElement("span");
-          longVal.className = "compare-long";
-          longVal.textContent = typeof b === "number" ? formatNumber(b) : b;
-
-          const delta = document.createElement("span");
-          delta.className = "compare-delta";
-          if (typeof a === "number" && typeof b === "number") {
-            const diff = b - a;
-            delta.textContent = diff > 0 ? `+${formatNumber(diff)}` : formatNumber(diff);
-            delta.classList.add(diff > 0 ? "up" : "flat");
-          } else {
-            delta.textContent = "—";
-          }
-
-          row.append(name, shortVal, longVal, delta);
-          return row;
+      function renderSummary(data) {
+        historySummaryBox.textContent = data.history_summary || "Пока пусто.";
+        const comp = data.compression || {};
+        compressionMetaBox.textContent =
+          `Свернуто: ${comp.summarized_through || 0} / ${data.messages?.length || 0} · updates: ${comp.updates?.length || 0}`;
+        compressionJournal.replaceChildren(...(comp.updates || []).map((item) => {
+          const li = document.createElement("li");
+          li.textContent = `#${item.summarized_through}: +${item.batch_size} → ${item.summary_chars} chars` +
+            (item.used_fallback ? " (fallback)" : "");
+          return li;
         }));
       }
 
-      function renderGrowthChart(turns) {
-        if (!turns || turns.length === 0) {
-          growthChartBox.innerHTML = '<p class="empty-state">Таблица ходов покажет, как history и prompt растут с каждым сообщением.</p>';
+      function renderCompare(comparison) {
+        if (!comparison) {
+          comparePanel.innerHTML = '<p class="empty-state">Нажмите «Сравнить сжатие».</p>';
           return;
         }
-
-        const maxHistory = Math.max(...turns.map((turn) => turn.history_tokens || 0), 1);
-
-        growthChartBox.replaceChildren(...turns.map((turn) => {
-          const row = document.createElement("div");
-          row.className = "growth-row";
-
-          const label = document.createElement("span");
-          label.className = "growth-label";
-          label.textContent = `#${turn.turn}`;
-
-          const barWrap = document.createElement("div");
-          barWrap.className = "growth-bar-wrap";
-
-          const historyBar = document.createElement("div");
-          historyBar.className = "growth-bar history";
-          historyBar.style.width = `${Math.max(4, (turn.history_tokens / maxHistory) * 100)}%`;
-          historyBar.title = `history: ${turn.history_tokens}`;
-
-          const promptBar = document.createElement("div");
-          promptBar.className = "growth-bar prompt";
-          promptBar.style.width = `${Math.max(4, (turn.prompt_tokens_estimated / (turn.prompt_tokens_estimated + 1)) * 100)}%`;
-          promptBar.title = `prompt est: ${turn.prompt_tokens_estimated}`;
-
-          barWrap.append(historyBar, promptBar);
-
-          const meta = document.createElement("span");
-          meta.className = "growth-meta";
-          meta.textContent = `h ${turn.history_tokens} · p ${turn.prompt_tokens_estimated}`;
-
-          row.append(label, barWrap, meta);
-          return row;
-        }));
+        const without = comparison.without;
+        const withTrack = comparison.with;
+        comparePanel.innerHTML = `
+          <div class="compare-grid">
+            <article>
+              <h4>Без сжатия</h4>
+              <p>Judge: ${without.judge?.score?.toFixed(2) ?? "—"} ${without.judge?.passed ? "✓" : "✗"}</p>
+              <p class="compare-note">${without.judge?.note || ""}</p>
+              <p>Prompt cum.: ${formatNumber(without.tokens?.cumulative_prompt_full_estimated)}</p>
+            </article>
+            <article>
+              <h4>Со сжатием</h4>
+              <p>Judge: ${withTrack.judge?.score?.toFixed(2) ?? "—"} ${withTrack.judge?.passed ? "✓" : "✗"}</p>
+              <p class="compare-note">${withTrack.judge?.note || ""}</p>
+              <p>Prompt cum.: ${formatNumber(withTrack.tokens?.cumulative_prompt_estimated)}</p>
+              <p>Summarize: ${formatNumber(withTrack.tokens?.cumulative_summarization_estimated)}</p>
+            </article>
+          </div>
+          <p class="compare-delta">Net saved: ${formatNumber(comparison.tokens_saved)} · ${comparison.quality_delta}</p>`;
       }
 
-      function renderBreakagePanel(data) {
+      function renderNetSavings(data) {
         const turn = data.current_turn || data.last_turn;
-        if (!turn) {
-          breakagePanel.innerHTML = '<p class="empty-state">При overflow здесь будет объяснение, что именно сломалось.</p>';
-          return;
-        }
-
-        if (turn.status === "overflow") {
-          const o = turn.overflow || data.overflow || {};
-          breakagePanel.innerHTML = `
-            <p class="breakage-title">Local preflight overflow</p>
-            <ul class="breakage-list">
-              <li>Модель <strong>не вызывалась</strong></li>
-              <li>Prompt estimated: <strong>${formatNumber(o.prompt_tokens_estimated)}</strong></li>
-              <li>+ response budget: <strong>${formatNumber(o.response_budget)}</strong></li>
-              <li>&gt; local limit: <strong>${formatNumber(o.context_limit)}</strong></li>
-              <li>Перебор: <strong>${formatNumber(o.over_by)}</strong> tokens</li>
-            </ul>`;
-          return;
-        }
-
-        if (turn.status === "provider_error") {
-          const e = turn.provider_error || data.provider_error || {};
-          breakagePanel.innerHTML = `
-            <p class="breakage-title">OpenRouter отклонил запрос</p>
-            <ul class="breakage-list">
-              <li>HTTP <strong>${e.http_status ?? "?"}</strong></li>
-              <li>Context-compression: <strong>disabled</strong></li>
-              <li>${e.message || data.error || "Provider error"}</li>
-            </ul>`;
-          return;
-        }
-
-        if (turn.status === "provider_unexpected_ok") {
-          breakagePanel.innerHTML = `
-            <p class="breakage-title warn">Overflow не случился</p>
-            <p class="breakage-text">${data.provider_warning || turn.provider_warning || "OpenRouter принял запрос."}</p>
-            <p class="breakage-text">Увеличьте OPENROUTER_MODEL_CONTEXT или выберите модель с меньшим окном.</p>`;
-          return;
-        }
-
-        const memoryLoss = turn.memory_loss || data.memory_loss;
-        if (memoryLoss) {
-          const titleClass = memoryLoss.recalled_correctly ? "ok" : "warn";
-          const title = memoryLoss.recalled_correctly
-            ? "Кодовое слово сохранилось"
-            : "Потеря раннего контекста";
-          breakagePanel.innerHTML = `
-            <p class="breakage-title ${titleClass}">${title}</p>
-            <ul class="breakage-list">
-              <li>Ожидалось: <strong>${memoryLoss.expected_codeword}</strong></li>
-              <li>Ответ модели: <strong>${memoryLoss.model_answer || "—"}</strong></li>
-              <li>Filler-пар в истории: <strong>${formatNumber(memoryLoss.prefill_pairs)}</strong></li>
-              <li>History перед вопросом: <strong>${formatNumber(memoryLoss.prefill_history_tokens)}</strong> tokens (est.)</li>
-              <li>Prompt полный (est.): <strong>${formatNumber(memoryLoss.recall_prompt_tokens_full_estimated)}</strong></li>
-              <li>Локальный budget prompt: <strong>${formatNumber(memoryLoss.local_prompt_budget)}</strong></li>
-              <li>Prompt в API (est. / actual): <strong>${formatNumber(memoryLoss.recall_prompt_tokens_estimated)} / ${formatNumber(memoryLoss.recall_prompt_tokens_actual)}</strong></li>
-              <li>Отброшено старых сообщений: <strong>${formatNumber(memoryLoss.messages_dropped_from_head)}</strong></li>
-              <li>BLUEFOX в payload: <strong>${memoryLoss.codeword_in_llm_payload ? "да" : "нет"}</strong></li>
-              <li>Context-compression: <strong>disabled</strong></li>
-              <li>Стратегия: <strong>${memoryLoss.truncation_strategy || "—"}</strong></li>
-              <li>Окно модели: <strong>${formatNumber(memoryLoss.model_context_limit)}</strong></li>
-            </ul>
-            <p class="breakage-text">${memoryLoss.summary}</p>`;
-          return;
-        }
-
-        if (turn.status === "ok") {
-          breakagePanel.innerHTML = `
-            <p class="breakage-title ok">Последний ход успешен</p>
-            <p class="breakage-text">Prompt ${formatNumber(turn.prompt_tokens_actual ?? turn.prompt_tokens_estimated)} tokens, ответ ${formatNumber(turn.response_tokens_actual ?? turn.response_tokens_estimated)} tokens.</p>`;
-          return;
-        }
-
-        breakagePanel.innerHTML = `<p class="breakage-text">Статус: ${turn.status}</p>`;
-      }
-
-      function renderCurrentTurn(data) {
-        const turn = data.current_turn || data.last_turn;
-        if (!turn) {
-          renderDefinitionList(currentTurnBox, [["Статус", "Нет ходов"]]);
-          return;
-        }
-
-        const costText = turn.turn_cost_actual !== null && turn.turn_cost_actual !== undefined
-          ? formatCost(turn.turn_cost_actual, "actual")
-          : formatCost(turn.turn_cost_estimated, "estimated");
-
-        renderDefinitionList(currentTurnBox, [
-          ["Статус", turn.status],
-          ["Prompt (estimated / actual)", `${formatNumber(turn.prompt_tokens_estimated)} / ${formatNumber(turn.prompt_tokens_actual)}`],
-          ["Response (estimated / actual)", `${formatNumber(turn.response_tokens_estimated)} / ${formatNumber(turn.response_tokens_actual)}`],
-          ["Total (estimated / actual)", `${formatNumber(turn.total_tokens_estimated)} / ${formatNumber(turn.total_tokens_actual)}`],
-          ["Turn cost", costText],
-          ["Model called", turn.model_called ? "yes" : "no"],
-        ]);
-      }
-
-      function renderPromptUsage(data) {
-        const usage = data.prompt_usage || {};
-        const limit = usage.context_limit || data.context_limit || 0;
-        const projected = usage.projected_total_tokens || 0;
-        const ratio = limit > 0 ? Math.min(100, (projected / limit) * 100) : 0;
-        limitBar.style.width = `${ratio}%`;
-        limitBar.className = ratio >= 100 ? "limit-bar over" : ratio >= 80 ? "limit-bar warn" : "limit-bar";
-
-        renderDefinitionList(promptUsageBox, [
-          ["Prompt (estimated)", formatNumber(usage.prompt_tokens_estimated)],
-          ["+ response budget", formatNumber(usage.response_budget || data.response_budget)],
-          ["= projected total", formatNumber(projected)],
-          ["Local limit", formatNumber(limit)],
-          ["Remaining", formatNumber(usage.remaining_tokens)],
+        const cumulative = data.cumulative || {};
+        renderDefinitionList(netSavingsBox, [
+          ["Turn net saved", formatNumber(turn?.tokens_net_saved)],
+          ["Cumulative net saved", formatNumber(cumulative.tokens_net_saved)],
+          ["Summarization overhead", formatNumber(cumulative.summarization_tokens_estimated)],
         ]);
       }
 
       function renderCumulative(data) {
-        const cumulative = data.cumulative || {};
-        const pricing = data.pricing || {};
-        const costActual = cumulative.cost_actual !== null && cumulative.cost_actual !== undefined
-          ? formatCost(cumulative.cost_actual, "actual")
-          : "—";
-        const costEstimated = pricing.configured
-          ? formatCost(cumulative.cost_estimated, "estimated")
-          : "цены не заданы";
-
+        const c = data.cumulative || {};
         renderDefinitionList(cumulativeBox, [
-          ["Σ prompt (actual)", formatNumber(cumulative.prompt_tokens_actual)],
-          ["Σ response (actual)", formatNumber(cumulative.response_tokens_actual)],
-          ["Σ total (actual)", formatNumber(cumulative.total_tokens_actual)],
-          ["Σ cost (actual)", costActual],
-          ["Σ cost (estimated)", costEstimated],
-        ]);
-      }
-
-      function renderConfig(data) {
-        const pricing = data.pricing || {};
-        renderDefinitionList(configBox, [
-          ["Model", data.model || "—"],
-          ["Tokenizer", data.tokenizer || "—"],
-          ["Local preflight limit", formatNumber(data.context_limit)],
-          ["OpenRouter model context", formatNumber(data.openrouter_model_context)],
+          ["Prompt est.", formatNumber(c.prompt_tokens_estimated)],
+          ["Prompt full est.", formatNumber(c.prompt_tokens_full_estimated)],
+          ["Summarize est.", formatNumber(c.summarization_tokens_estimated)],
+          ["Response est.", formatNumber(c.response_tokens_estimated)],
+          ["Total est. (incl. summarize)", formatNumber(c.total_tokens_estimated)],
+          ["Cost actual", formatCost(c.cost_actual)],
         ]);
       }
 
       function renderTurnTable(turns) {
-        const rows = turns || [];
-        if (rows.length === 0) {
-          turnTableBody.innerHTML = '<tr><td colspan="7" class="empty-table">Ходов пока нет.</td></tr>';
+        if (!turns?.length) {
+          turnTableBody.innerHTML = '<tr><td colspan="6" class="empty-state">Нет ходов</td></tr>';
           return;
         }
-
-        turnTableBody.replaceChildren(...rows.map((turn) => {
+        turnTableBody.replaceChildren(...turns.map((turn) => {
           const row = document.createElement("tr");
-          if (turn.status === "overflow" || turn.status === "provider_error") {
-            row.className = "row-overflow";
-          } else if (turn.memory_loss && !turn.memory_loss.recalled_correctly) {
-            row.className = "row-memory-loss";
-          }
-
-          const cost = turn.turn_cost_actual ?? turn.turn_cost_estimated;
-          const costLabel = turn.turn_cost_actual != null ? "actual" : "estimated";
-          const cells = [
-            turn.turn,
-            turn.status,
-            turn.current_request_tokens,
-            turn.history_tokens,
-            turn.prompt_tokens_actual ?? turn.prompt_tokens_estimated,
-            turn.response_tokens_actual ?? turn.response_tokens_estimated,
-            cost == null ? "—" : `${Number(cost).toFixed(6)} (${costLabel})`,
-          ];
-
-          row.replaceChildren(...cells.map((value) => {
-            const cell = document.createElement("td");
-            cell.textContent = value;
-            return cell;
-          }));
+          row.innerHTML = `
+            <td>${turn.turn}</td>
+            <td>${turn.compression_enabled ? "on" : "off"}</td>
+            <td>${formatNumber(turn.history_tokens_full)}</td>
+            <td>${formatNumber(turn.history_tokens_sent)}</td>
+            <td>${formatNumber(turn.prompt_tokens_estimated)}</td>
+            <td>${formatNumber(turn.tokens_net_saved)}</td>`;
           return row;
         }));
       }
 
+      function renderConfig(data) {
+        const cfg = data.compression_config || {};
+        renderDefinitionList(configBox, [
+          ["Model", data.model || "—"],
+          ["Tokenizer", data.tokenizer || "—"],
+          ["Keep recent", String(cfg.keep_recent ?? "—")],
+          ["Compress every", String(cfg.compress_every ?? "—")],
+        ]);
+      }
+
+      function renderPayload(data) {
+        if (!data.payload_preview?.length) {
+          payloadPreview.textContent = "—";
+          return;
+        }
+        payloadPreview.textContent = JSON.stringify(data.payload_preview, null, 2);
+      }
+
       function renderState(data) {
-        renderMessages(data.messages || []);
+        renderMessages(data.messages);
         renderTokenTriple(data);
-        renderGrowthChart(data.turns || []);
-        renderBreakagePanel(data);
-        renderCurrentTurn(data);
-        renderPromptUsage(data);
+        renderSummary(data);
+        renderNetSavings(data);
         renderCumulative(data);
+        renderTurnTable(data.turns);
         renderConfig(data);
-        renderTurnTable(data.turns || []);
-      }
-
-      function renderMetadata(data) {
-        const meta = data.metadata || {};
-        const items = [];
-        if (meta.model) items.push(`model: ${meta.model}`);
-        if (meta.duration_ms != null) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
-        if (meta.total_tokens != null) items.push(`tokens (actual): ${meta.total_tokens}`);
-        if (meta.cost != null) items.push(`cost (actual): $${Number(meta.cost).toFixed(6)}`);
-        metadataBox.textContent = items.length ? items.join(" · ") : "Метаданные недоступны.";
-      }
-
-      async function requestJson(url, options = {}) {
-        const response = await fetch(url, options);
-        const data = await response.json();
-        return { response, data };
+        renderPayload(data);
+        if (data.compression) {
+          compressionToggle.checked = Boolean(data.compression.enabled);
+        }
+        if (data.metadata) {
+          metadataBox.textContent = JSON.stringify(data.metadata, null, 2);
+        }
       }
 
       async function loadState() {
-        setStatus("Загрузка...", "loading");
-        try {
-          const { response, data } = await requestJson("/api/chat");
-          if (!response.ok) throw new Error(data.error || "Load failed");
-          renderState(data);
-          renderComparePanel(JSON.parse(sessionStorage.getItem(COMPARE_KEY) || "{}"));
-          showAlert(data.error || "", data.overflow ? "error" : "");
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        }
+        const response = await fetch("/api/chat");
+        const data = await response.json();
+        renderState(data);
       }
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const message = messageInput.value.trim();
-        if (!message) {
-          form.reportValidity();
-          return;
-        }
-
+        if (!message) return;
         setBusy(true);
-        setStatus("Запрос...", "loading");
-        metadataBox.textContent = "Preflight token check, затем OpenRouter...";
+        setStatus("Отправка…", "busy");
         showAlert("");
-        showLesson("");
-
         try {
-          const { response, data } = await requestJson("/api/chat", {
+          const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify({
+              message,
+              compression: compressionToggle.checked,
+            }),
           });
-
-          if (data.overflow) {
-            messageInput.value = "";
-            renderState(data);
-            renderMetadata(data);
-            showAlert(data.error || "Preflight overflow", "error");
-            showLesson("Ручное сообщение не прошло local preflight: prompt + budget превысили TOKEN_CONTEXT_LIMIT.");
-            setStatus("Overflow", "error");
-            return;
-          }
-
-          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Unknown error"}`);
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Request failed");
           messageInput.value = "";
           renderState(data);
-          renderMetadata(data);
-          setStatus("Готово");
+          setStatus("Готово", "ok");
         } catch (error) {
+          showAlert(error.message, "error");
           setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-          messageInput.focus();
-        }
-      });
-
-      shortButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("Короткий диалог...", "loading");
-        showAlert("");
-        showLesson("Короткий диалог: мало history, prompt и cost. Сравните с длинным следующим шагом.");
-        try {
-          const { response, data } = await requestJson("/api/demo/short", { method: "POST" });
-          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Short demo failed"}`);
-          renderState(data);
-          renderMetadata(data);
-          saveCompareSnapshot("short", data);
-          setStatus("Короткий готов");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
         } finally {
           setBusy(false);
         }
       });
 
-      longButton.addEventListener("click", async () => {
+      compareButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("Длинный диалог...", "loading");
-        showAlert("");
-        showLesson("Длинный диалог: history и prompt растут на каждом ходе — смотрите график и таблицу.");
+        setStatus("A/B compare…", "busy");
+        showAlert("Compare demo делает много вызовов OpenRouter.", "warn");
         try {
-          const { response, data } = await requestJson("/api/demo/long", { method: "POST" });
-          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Long demo failed"}`);
-          renderState(data);
-          renderMetadata(data);
-          saveCompareSnapshot("long", data);
-          setStatus("Длинный готов");
+          const response = await fetch("/api/demo/compression-compare", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Compare failed");
+          renderCompare(data.comparison);
+          setStatus("Compare готов", "ok");
         } catch (error) {
+          showAlert(error.message, "error");
           setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
-      });
-
-      overflowButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("Local overflow...", "loading");
-        showAlert("");
-        showLesson("Local overflow: backend блокирует запрос до OpenRouter. Модель не вызывается, cost = 0.");
-        try {
-          const { response, data } = await requestJson("/api/demo/overflow", { method: "POST" });
-          renderState(data);
-          renderMetadata(data);
-          showAlert(data.error || "Preflight overflow", "error");
-          setStatus("Local overflow", "error");
-          if (!response.ok && !data.overflow) {
-            throw new Error(`${data.status || response.status}: ${data.error || "Preflight overflow failed"}`);
-          }
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
-      });
-
-      providerOverflowButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("OpenRouter overflow...", "loading");
-        showLesson("OpenRouter overflow: реальный вызов с context-compression off. Ожидаем ошибку провайдера или предупреждение, если окно модели больше.");
-        showAlert("Запрос к OpenRouter с max_tokens ≈ context window модели…");
-        try {
-          const { response, data } = await requestJson("/api/demo/provider-overflow", { method: "POST" });
-          renderState(data);
-          renderMetadata(data);
-          if (data.provider_error) {
-            showAlert(data.error || "OpenRouter provider error", "error");
-            setStatus("Provider error", "error");
-            return;
-          }
-          if (data.provider_warning) {
-            showAlert(data.provider_warning, "warn");
-            setStatus("Unexpected OK", "loading");
-            return;
-          }
-          if (!response.ok) {
-            throw new Error(`${data.status || response.status}: ${data.error || "Provider overflow failed"}`);
-          }
-          setStatus("Готово");
-          showAlert("");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
-      });
-
-      memoryLossButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("Потеря памяти...", "loading");
-        showAlert("2 вызова OpenRouter: кодовое слово → длинная история → вопрос про начало…");
-        showLesson(
-          "Memory loss: длинная история → локально отбрасываем старые сообщения до окна 8K (compression off) → в API BLUEFOX часто уже нет."
-        );
-        try {
-          const { response, data } = await requestJson("/api/demo/memory-loss", { method: "POST" });
-          renderState(data);
-          renderMetadata(data);
-          const memoryLoss = data.memory_loss;
-          if (!response.ok && !memoryLoss) {
-            throw new Error(`${data.status || response.status}: ${data.error || "Memory loss demo failed"}`);
-          }
-          if (memoryLoss?.provider_error || data.provider_error) {
-            showAlert(memoryLoss?.summary || data.error || "Recall не прошёл", "error");
-            setStatus("Recall error", "error");
-          } else if (memoryLoss?.recalled_correctly) {
-            showAlert(memoryLoss.summary, "warn");
-            setStatus("Память сохранилась", "loading");
-          } else if (memoryLoss) {
-            showAlert(memoryLoss.summary, "error");
-            setStatus("Потеря памяти", "error");
-          } else {
-            setStatus("Готово");
-            showAlert("");
-          }
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
         } finally {
           setBusy(false);
         }
@@ -834,26 +388,18 @@
 
       clearButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("Очистка...", "loading");
-        showAlert("");
-        showLesson("");
         try {
-          const { response, data } = await requestJson("/api/chat", { method: "DELETE" });
-          if (!response.ok) throw new Error(data.error || "Clear failed");
-          sessionStorage.removeItem(COMPARE_KEY);
-          renderState(data);
-          renderComparePanel({});
-          metadataBox.textContent = "Диалог и token stats очищены.";
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
+          await fetch("/api/chat", { method: "DELETE" });
+          renderCompare(null);
+          showAlert("");
+          await loadState();
+          setStatus("Очищено", "ok");
         } finally {
           setBusy(false);
         }
       });
 
-      loadState();
+      loadState().catch((error) => showAlert(error.message, "error"));
     </script>
   </body>
 </html>

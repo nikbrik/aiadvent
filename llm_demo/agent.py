@@ -7,99 +7,117 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
-from token_counter import count_message_tokens, count_text_tokens, tokenizer_name
-
 try:
-    from llm_client import OpenRouterError
+    from context_compression import (
+        append_summary_block,
+        build_payload_preview,
+        compression_config,
+        compression_enabled,
+        default_compression,
+        ensure_compression_fields,
+        maybe_compress_history,
+        reset_compression,
+        select_history_messages,
+    )
+    from quality_judge import quality_delta, safe_judge_answer
+    from token_counter import count_message_tokens, count_text_tokens, tokenizer_name
 except ImportError:
-    from .llm_client import OpenRouterError
+    from .context_compression import (
+        append_summary_block,
+        build_payload_preview,
+        compression_config,
+        compression_enabled,
+        default_compression,
+        ensure_compression_fields,
+        maybe_compress_history,
+        reset_compression,
+        select_history_messages,
+    )
+    from .quality_judge import quality_delta, safe_judge_answer
+    from .token_counter import count_message_tokens, count_text_tokens, tokenizer_name
 
 
 DEFAULT_PROVIDER = {"allow_fallbacks": False}
-# Budget OpenRouter default with 8K context so provider-overflow demo hits a real limit.
-DEFAULT_MODEL = "meta-llama/llama-3-8b-instruct"
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
 REASONING_EXCLUDED = {"exclude": True}
-DEFAULT_CONTEXT_LIMIT = 4096
-DEFAULT_MAX_TOKENS = 512
-DEFAULT_OPENROUTER_MODEL_CONTEXT = 8192
-DEFAULT_MEMORY_LOSS_OVERSHOOT = 2.0
-DEFAULT_MEMORY_LOSS_TOKEN_SAFETY = 4.0
-DEFAULT_MEMORY_LOSS_RECALL_MAX_TOKENS = 128
-DEFAULT_MESSAGE_PREVIEW_CHARS = 400
-DEFAULT_LOG_BODY_CHARS = 8000
-SYSTEM_PROMPT = (
-    "You are a helpful chat assistant in a token-accounting demo. "
-    "Keep answers concise unless the user asks for detail."
+MAX_ARCHIVED_SUMMARIES = 8
+MAX_SUMMARY_CHARS = 900
+DEFAULT_MAX_STORED_MESSAGES = 200
+DEFAULT_MAX_STORED_TURNS = 200
+
+COMPARE_SECRET_PROMPT = (
+    "Запомни: кодовое слово BLUEFOX, любимый язык Kotlin, проект Orbit. "
+    "Ответь только «OK»."
 )
-
-SHORT_DEMO_MESSAGES = [
-    "Привет!",
-    "Сколько будет 2+2?",
-]
-
-LONG_DEMO_MESSAGES = [
-    "Начни длинный диалог про Python.",
-    "Расскажи про list comprehensions.",
+COMPARE_RECALL_PROMPT = (
+    "Назови кодовое слово, любимый язык и проект из первого сообщения. "
+    "Кратко, по пунктам."
+)
+COMPARE_GROUND_TRUTH = {
+    "codeword": "BLUEFOX",
+    "language": "Kotlin",
+    "project": "Orbit",
+}
+COMPARE_FILLER_MESSAGES = [
+    "Расскажи про list comprehensions в Python.",
     "А про generators?",
-    "Чем отличается tuple от list?",
+    "Чем tuple отличается от list?",
     "Что такое декоратор?",
     "Как работает GIL?",
     "Когда использовать asyncio?",
     "Что такое dataclass?",
     "Как устроен dict?",
-    "Дай короткий итог.",
+    "Что такое context manager?",
+    "Чем отличаются append и extend?",
+    "Что такое lambda?",
+    "Дай короткий итог по Python.",
 ]
-
-OVERFLOW_FILLER = (
-    "Это синтетическое сообщение для демонстрации переполнения контекста. "
-    "Каждый повтор увеличивает prompt и историю. "
-)
-
-PROVIDER_OVERFLOW_USER_MESSAGE = (
-    "Provider overflow demo: запрос с max_tokens, который вместе с prompt "
-    "превышает context window модели."
-)
-
-MEMORY_LOSS_CODEWORD = "BLUEFOX"
-MEMORY_LOSS_SECRET_PROMPT = (
-    f"Запомни кодовое слово: {MEMORY_LOSS_CODEWORD}. Ответь только «OK»."
-)
-MEMORY_LOSS_RECALL_PROMPT = (
-    "Какое кодовое слово я назвал в самом первом сообщении этого диалога? "
-    "Ответь одним словом, без пояснений."
-)
-MEMORY_LOSS_FILLER = (
-    "Синтетический filler для memory-loss demo: история растёт, "
-    "ранний факт из начала диалога может перестать попадать в контекст модели. "
-    "OpenRouter может сжать или обрезать старые сообщения, когда prompt слишком длинный. "
-)
 
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def default_state():
-    return {
-        "version": 1,
-        "created_at": utc_now(),
-        "updated_at": utc_now(),
-        "messages": [],
-        "turns": [],
-        "cumulative": empty_cumulative(),
-    }
+def new_chat_id():
+    return str(uuid.uuid4())
 
 
 def empty_cumulative():
     return {
         "prompt_tokens_estimated": 0,
-        "prompt_tokens_actual": 0,
+        "prompt_tokens_full_estimated": 0,
         "response_tokens_estimated": 0,
         "response_tokens_actual": 0,
+        "summarization_tokens_estimated": 0,
         "total_tokens_estimated": 0,
         "total_tokens_actual": 0,
-        "cost_estimated": 0.0,
+        "tokens_net_saved": 0,
         "cost_actual": 0.0,
+        "cost_estimated": 0.0,
+    }
+
+
+def default_memory():
+    return {
+        "version": 2,
+        "created_at": utc_now(),
+        "updated_at": utc_now(),
+        "profile": {
+            "style": "",
+            "facts": [],
+            "inferences": [],
+        },
+        "current_chat": {
+            "id": new_chat_id(),
+            "started_at": utc_now(),
+            "summary": "",
+            "messages": [],
+        },
+        "history_summary": "",
+        "compression": default_compression(),
+        "archived_chats": [],
+        "turns": [],
+        "cumulative": empty_cumulative(),
     }
 
 
@@ -116,20 +134,20 @@ class FileMemoryStore:
     def load(self, client_id):
         path = self.path_for(client_id)
         if not path.exists():
-            return default_state()
+            return default_memory()
 
         try:
             with path.open("r", encoding="utf-8") as handle:
                 data = json.load(handle)
         except (OSError, json.JSONDecodeError):
-            return default_state()
+            return default_memory()
 
-        return normalize_state(data)
+        return normalize_memory(data)
 
-    def save(self, client_id, state):
+    def save(self, client_id, memory):
         path = self.path_for(client_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        state["updated_at"] = utc_now()
+        memory["updated_at"] = utc_now()
 
         fd, tmp_name = tempfile.mkstemp(
             prefix=f".{path.stem}.",
@@ -139,7 +157,7 @@ class FileMemoryStore:
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(state, handle, ensure_ascii=False, indent=2)
+                json.dump(memory, handle, ensure_ascii=False, indent=2)
                 handle.write("\n")
             os.replace(tmp_name, path)
         finally:
@@ -158,593 +176,479 @@ class ChatAgent:
         self.llm = llm
 
     def snapshot(self, client_id):
-        return public_state(self.memory_store.load(client_id))
+        return public_memory(self.memory_store.load(client_id))
 
     def clear(self, client_id):
         self.memory_store.clear(client_id)
-        return public_state(default_state())
+        return public_memory(default_memory())
 
-    def respond(self, client_id, message):
+    def start_new_chat(self, client_id):
+        memory = self.memory_store.load(client_id)
+        archive_current_chat(memory)
+        self.memory_store.save(client_id, memory)
+        return public_memory(memory)
+
+    def resume_chat(self, client_id, chat_id):
+        memory = self.memory_store.load(client_id)
+        chat_id = str(chat_id or "").strip()
+        archived = memory.get("archived_chats", [])
+        index = next(
+            (
+                position
+                for position, chat in enumerate(archived)
+                if chat.get("id") == chat_id and chat.get("messages")
+            ),
+            None,
+        )
+        if index is None:
+            raise ValueError("archived chat was not found")
+
+        restored = archived.pop(index)
+        archive_current_chat(memory)
+        memory["current_chat"] = {
+            "id": restored.get("id") or new_chat_id(),
+            "started_at": restored.get("started_at") or utc_now(),
+            "summary": restored.get("summary", ""),
+            "messages": clean_messages(restored.get("messages"), limit=None),
+        }
+        reset_compression(memory)
+        memory["current_chat"]["summary"] = ""
+        self.memory_store.save(client_id, memory)
+        return public_memory(memory)
+
+    def respond(self, client_id, message, compression=None):
         message = str(message or "").strip()
         if not message:
             raise ValueError("message is required")
 
-        state = self.memory_store.load(client_id)
-        return self._complete_turn(client_id, state, message)
+        memory = self.memory_store.load(client_id)
+        if compression is not None:
+            ensure_compression_fields(memory)
+            memory["compression"]["enabled"] = bool(compression)
 
-    def run_demo_short(self, client_id):
-        self.clear(client_id)
-        last_result = None
-        for message in SHORT_DEMO_MESSAGES:
-            last_result = self.respond(client_id, message)
-        return last_result
+        return self._complete_turn(client_id, memory, message)
 
-    def run_demo_long(self, client_id):
-        self.clear(client_id)
-        last_result = None
-        for message in LONG_DEMO_MESSAGES:
-            last_result = self.respond(client_id, message)
-        return last_result
+    def run_demo_compression_compare(self, client_id):
+        del client_id
+        off_id = str(uuid.uuid4())
+        on_id = str(uuid.uuid4())
+        script = [COMPARE_SECRET_PROMPT, *COMPARE_FILLER_MESSAGES, COMPARE_RECALL_PROMPT]
 
-    def run_demo_overflow(self, client_id):
-        self.clear(client_id)
-        state = self.memory_store.load(client_id)
-        context_limit = context_limit_value()
-        response_budget = max_tokens_value()
-        filler = overflow_filler_message(context_limit, response_budget)
+        without = self._run_compare_track(off_id, script, compression=False)
+        with_track = self._run_compare_track(on_id, script, compression=True)
 
-        state["messages"].append({"role": "user", "content": filler})
-        state["messages"].append({
-            "role": "assistant",
-            "content": "Синтетический ответ для заполнения истории перед overflow.",
-        })
+        self.memory_store.clear(off_id)
+        self.memory_store.clear(on_id)
 
-        result = self._complete_turn(
-            client_id,
-            state,
-            "Ещё одно сообщение, которое должно превысить лимит контекста.",
-            allow_prefill=True,
-        )
-        return result
-
-    def run_demo_provider_overflow(self, client_id):
-        self.clear(client_id)
-        state = self.memory_store.load(client_id)
-        return self._provider_overflow_turn(
-            client_id,
-            state,
-            PROVIDER_OVERFLOW_USER_MESSAGE,
+        without_score = without["judge"]["score"]
+        with_score = with_track["judge"]["score"]
+        tokens_saved = (
+            without["tokens"]["cumulative_prompt_full_estimated"]
+            - with_track["tokens"]["cumulative_prompt_estimated"]
+            - with_track["tokens"]["cumulative_summarization_estimated"]
         )
 
-    def run_demo_memory_loss(self, client_id):
-        self.clear(client_id)
-        state = self.memory_store.load(client_id)
-        model = model_value()
-
-        self._complete_turn(client_id, state, MEMORY_LOSS_SECRET_PROMPT)
-
-        state = self.memory_store.load(client_id)
-        prefill_pairs, prefill_history_tokens = build_memory_loss_prefill(
-            state.get("messages", []),
-            model,
-        )
-        for index, (user_text, assistant_text) in enumerate(prefill_pairs, start=1):
-            state["messages"].append({"role": "user", "content": user_text})
-            state["messages"].append({"role": "assistant", "content": assistant_text})
-        self.memory_store.save(client_id, state)
-
-        state = self.memory_store.load(client_id)
-        from llm_client import DISABLE_CONTEXT_COMPRESSION
-
-        full_history = clean_messages(state.get("messages", []))
-        model_context = openrouter_model_context()
-        recall_max_tokens = memory_loss_recall_max_tokens()
-        prompt_budget = memory_loss_local_prompt_budget(model_context, recall_max_tokens)
-        prompt_full_estimated = count_message_tokens(
-            build_llm_messages(full_history, MEMORY_LOSS_RECALL_PROMPT),
-            model,
-        )
-        truncated_history, dropped_messages = truncate_history_for_model_window(
-            full_history,
-            MEMORY_LOSS_RECALL_PROMPT,
-            model,
-            prompt_budget,
-        )
-
-        try:
-            result = self._complete_turn(
-                client_id,
-                state,
-                MEMORY_LOSS_RECALL_PROMPT,
-                skip_preflight=True,
-                demo="memory_loss",
-                llm_history_override=truncated_history,
-                llm_plugins=DISABLE_CONTEXT_COMPRESSION,
-                llm_max_tokens=recall_max_tokens,
-                turn_extras={
-                    "prompt_tokens_full_estimated": prompt_full_estimated,
-                    "local_prompt_budget": prompt_budget,
-                    "token_safety_multiplier": memory_loss_token_safety_multiplier(),
-                    "messages_dropped_from_head": dropped_messages,
-                    "context_compression_disabled": True,
-                    "truncation_strategy": "drop_oldest_until_fits",
-                    "model_context_limit": model_context,
-                    "codeword_in_llm_payload": codeword_in_history(truncated_history),
-                },
-            )
-        except OpenRouterError as exc:
-            return self._memory_loss_provider_failure_result(
-                client_id,
-                state,
-                exc,
-                prefill_pairs=len(prefill_pairs),
-                prefill_history_tokens=prefill_history_tokens,
-                prompt_full_estimated=prompt_full_estimated,
-                prompt_budget=prompt_budget,
-                dropped_messages=dropped_messages,
-                truncated_history=truncated_history,
-                recall_max_tokens=recall_max_tokens,
-                model_context=model_context,
-            )
-
-        memory_loss = build_memory_loss_result(
-            result.get("reply", ""),
-            prefill_pairs=len(prefill_pairs),
-            prefill_history_tokens=prefill_history_tokens,
-            recall_turn=result.get("last_turn") or {},
-            target_prompt_tokens=memory_loss_target_prompt_tokens(),
-        )
-        result["memory_loss"] = memory_loss
-        if result.get("last_turn") is not None:
-            result["last_turn"]["memory_loss"] = memory_loss
-            result["last_turn"]["demo"] = "memory_loss"
-
-        state = self.memory_store.load(client_id)
-        if state.get("turns"):
-            state["turns"][-1]["memory_loss"] = memory_loss
-            state["turns"][-1]["demo"] = "memory_loss"
-            self.memory_store.save(client_id, state)
-
-        if not memory_loss["recalled_correctly"]:
-            result["error"] = memory_loss["summary"]
-        return result
-
-    def _memory_loss_provider_failure_result(
-        self,
-        client_id,
-        state,
-        exc,
-        prefill_pairs,
-        prefill_history_tokens,
-        prompt_full_estimated,
-        prompt_budget,
-        dropped_messages,
-        truncated_history,
-        recall_max_tokens,
-        model_context,
-    ):
-        turn_number = len(state.get("turns", [])) + 1
-        prompt_sent_estimated = count_message_tokens(
-            build_llm_messages(truncated_history, MEMORY_LOSS_RECALL_PROMPT),
-            model_value(),
-        )
-        turn = {
-            "turn": turn_number,
-            "status": "provider_error",
-            "demo": "memory_loss",
-            "current_request_tokens": count_text_tokens(MEMORY_LOSS_RECALL_PROMPT, model_value()),
-            "history_tokens": count_message_tokens(state.get("messages", []), model_value()),
-            "prompt_tokens_estimated": prompt_sent_estimated,
-            "prompt_tokens_full_estimated": prompt_full_estimated,
-            "local_prompt_budget": prompt_budget,
-            "messages_dropped_from_head": dropped_messages,
-            "context_compression_disabled": True,
-            "model_context_limit": model_context,
-            "codeword_in_llm_payload": codeword_in_history(truncated_history),
-            "response_budget": recall_max_tokens,
-            "model_called": True,
-            "preflight_skipped": True,
-            "provider_error": {
-                "message": str(exc),
-                "http_status": exc.status,
-                "context_compression_disabled": True,
-            },
-        }
-        state["messages"].append({"role": "user", "content": MEMORY_LOSS_RECALL_PROMPT})
-        state.setdefault("turns", []).append(turn)
-        self.memory_store.save(client_id, state)
-
-        memory_loss = {
-            "demo": "memory_loss",
-            "expected_codeword": MEMORY_LOSS_CODEWORD,
-            "model_answer": "",
-            "recalled_correctly": False,
-            "prefill_pairs": prefill_pairs,
-            "prefill_history_tokens": prefill_history_tokens,
-            "recall_prompt_tokens_estimated": prompt_sent_estimated,
-            "recall_prompt_tokens_actual": None,
-            "recall_prompt_tokens_full_estimated": prompt_full_estimated,
-            "messages_dropped_from_head": dropped_messages,
-            "codeword_in_llm_payload": codeword_in_history(truncated_history),
-            "local_prompt_budget": prompt_budget,
-            "model_context_limit": model_context,
-            "context_compression_disabled": True,
-            "truncation_strategy": "drop_oldest_until_fits",
-            "summary": (
-                f"Recall не прошёл: OpenRouter HTTP {exc.status}. "
-                f"Локальная оценка prompt≈{prompt_sent_estimated}, budget≈{prompt_budget}. "
-                "Увеличьте MEMORY_LOSS_TOKEN_SAFETY или уменьшите MEMORY_LOSS_OVERSHOOT."
-            ),
-        }
-        turn["memory_loss"] = memory_loss
-        result = build_result(
-            state,
-            reply="",
-            provider_error=turn["provider_error"],
-            last_turn=turn,
-            error=memory_loss["summary"],
-        )
-        result["memory_loss"] = memory_loss
-        return result
-
-    def _complete_turn(
-        self,
-        client_id,
-        state,
-        user_message,
-        allow_prefill=False,
-        skip_preflight=False,
-        demo=None,
-        llm_history_override=None,
-        llm_plugins=None,
-        llm_max_tokens=None,
-        turn_extras=None,
-    ):
-        model = model_value()
-        full_history = clean_messages(state.get("messages", []))
-        history_messages = (
-            clean_messages(llm_history_override)
-            if llm_history_override is not None
-            else full_history
-        )
-        current_request_tokens = count_text_tokens(user_message, model)
-        history_tokens = count_message_tokens(full_history, model)
-
-        llm_messages = build_llm_messages(history_messages, user_message)
-        prompt_tokens_estimated = count_message_tokens(llm_messages, model)
-        response_budget = llm_max_tokens if llm_max_tokens is not None else max_tokens_value()
-        context_limit = context_limit_value()
-        projected_total = prompt_tokens_estimated + response_budget
-
-        turn_number = len(state.get("turns", [])) + 1
-        turn = {
-            "turn": turn_number,
-            "status": "ok",
-            "current_request_tokens": current_request_tokens,
-            "history_tokens": history_tokens,
-            "prompt_tokens_estimated": prompt_tokens_estimated,
-            "prompt_tokens_actual": None,
-            "response_tokens_estimated": 0,
-            "response_tokens_actual": None,
-            "total_tokens_actual": None,
-            "turn_cost_actual": None,
-            "turn_cost_estimated": None,
-            "response_budget": response_budget,
-            "context_limit": context_limit,
-            "projected_total_tokens": projected_total,
-            "model_called": False,
-        }
-        if skip_preflight:
-            turn["preflight_skipped"] = True
-        if demo:
-            turn["demo"] = demo
-        if turn_extras:
-            turn.update(turn_extras)
-
-        if not skip_preflight and projected_total > context_limit:
-            turn["status"] = "overflow"
-            turn["total_tokens_estimated"] = prompt_tokens_estimated
-            turn["overflow"] = {
-                "prompt_tokens_estimated": prompt_tokens_estimated,
-                "context_limit": context_limit,
-                "response_budget": response_budget,
-                "over_by": projected_total - context_limit,
-                "model_called": False,
+        return {
+            "comparison": {
+                "without": without,
+                "with": with_track,
+                "tokens_saved": tokens_saved,
+                "quality_delta": quality_delta(without_score, with_score),
             }
-            state.setdefault("turns", []).append(turn)
-            if not allow_prefill:
-                state["messages"].append({"role": "user", "content": user_message})
-            self.memory_store.save(client_id, state)
-            return build_result(
-                state,
-                reply="",
-                overflow=turn["overflow"],
-                last_turn=turn,
-            )
-
-        completion = self.llm(
-            messages=llm_messages,
-            model=model,
-            max_tokens=response_budget,
-            provider=DEFAULT_PROVIDER,
-            include_reasoning=False,
-            reasoning=REASONING_EXCLUDED,
-            plugins=llm_plugins,
-        )
-        return self._finalize_success_turn(
-            client_id,
-            state,
-            user_message,
-            turn,
-            completion,
-            model,
-        )
-
-    def _provider_overflow_turn(self, client_id, state, user_message, allow_prefill=False):
-        from llm_client import DISABLE_CONTEXT_COMPRESSION
-
-        model = model_value()
-        history_messages = clean_messages(state.get("messages", []))
-        current_request_tokens = count_text_tokens(user_message, model)
-        history_tokens = count_message_tokens(history_messages, model)
-
-        llm_messages = build_llm_messages(history_messages, user_message)
-        prompt_tokens_estimated = count_message_tokens(llm_messages, model)
-        model_context = openrouter_model_context()
-        response_budget = provider_overflow_max_tokens_value()
-        local_context_limit = context_limit_value()
-        projected_total = prompt_tokens_estimated + response_budget
-
-        turn_number = len(state.get("turns", [])) + 1
-        turn = {
-            "turn": turn_number,
-            "status": "provider_error",
-            "current_request_tokens": current_request_tokens,
-            "history_tokens": history_tokens,
-            "prompt_tokens_estimated": prompt_tokens_estimated,
-            "prompt_tokens_actual": None,
-            "response_tokens_estimated": 0,
-            "response_tokens_actual": None,
-            "total_tokens_actual": None,
-            "turn_cost_actual": None,
-            "turn_cost_estimated": None,
-            "response_budget": response_budget,
-            "context_limit": local_context_limit,
-            "model_context_limit": model_context,
-            "projected_total_tokens": projected_total,
-            "model_called": True,
-            "preflight_skipped": True,
-            "context_compression_disabled": True,
-            "overflow_strategy": "max_tokens",
         }
 
-        try:
-            completion = self.llm(
-                messages=llm_messages,
-                model=model,
-                max_tokens=response_budget,
-                provider=DEFAULT_PROVIDER,
-                include_reasoning=False,
-                reasoning=REASONING_EXCLUDED,
-                plugins=DISABLE_CONTEXT_COMPRESSION,
-            )
-        except OpenRouterError as exc:
-            turn["status"] = "provider_error"
-            turn["total_tokens_estimated"] = prompt_tokens_estimated
-            turn["provider_error"] = {
-                "message": str(exc),
-                "http_status": exc.status,
-                "context_compression_disabled": True,
-                "overflow_strategy": "max_tokens",
-                "model_context_limit": model_context,
-                "requested_max_tokens": response_budget,
-            }
-            state.setdefault("turns", []).append(turn)
-            if not allow_prefill:
-                state["messages"].append({"role": "user", "content": user_message})
-            self.memory_store.save(client_id, state)
-            return build_result(
-                state,
-                reply="",
-                provider_error=turn["provider_error"],
-                last_turn=turn,
-                error=format_provider_error_message(turn["provider_error"]),
+    def _run_compare_track(self, client_id, script, compression):
+        self.memory_store.clear(client_id)
+        memory = self.memory_store.load(client_id)
+        ensure_compression_fields(memory)
+        memory["compression"]["enabled"] = compression
+        self.memory_store.save(client_id, memory)
+
+        last_result = None
+        for index, message in enumerate(script):
+            memory = self.memory_store.load(client_id)
+            run_judge = index == len(script) - 1
+            last_result = self._complete_turn(
+                client_id,
+                memory,
+                message,
+                run_judge=run_judge,
             )
 
-        turn["status"] = "provider_unexpected_ok"
-        turn["provider_warning"] = (
-            f"OpenRouter принял запрос: prompt≈{prompt_tokens_estimated} + "
-            f"max_tokens={response_budget} не превысили context window модели "
-            f"({model_context}). Увеличь OPENROUTER_MODEL_CONTEXT или выбери модель с "
-            "меньшим окном, если нужна ошибка 400."
-        )
-        return self._finalize_success_turn(
-            client_id,
-            state,
-            user_message,
-            turn,
-            completion,
-            model,
-            allow_prefill=allow_prefill,
-            provider_warning=turn["provider_warning"],
+        return {
+            "compression": compression,
+            "answer": last_result.get("reply", ""),
+            "judge": last_result.get("judge") or {},
+            "summary": last_result.get("history_summary", ""),
+            "tokens": token_summary(last_result),
+        }
+
+    def _complete_turn(self, client_id, memory, user_message, run_judge=False):
+        ensure_compression_fields(memory)
+        model = model_value()
+        enabled = compression_enabled(memory)
+        full_history = clean_messages(memory["current_chat"]["messages"], limit=None)
+
+        summarization_events = []
+        if enabled:
+            summarization_events = maybe_compress_history(
+                memory,
+                self.llm,
+                model,
+                agent_options(),
+            )
+
+        history_messages, history_meta = select_history_messages(memory, enabled)
+        system_prompt = build_system_prompt(memory, include_history_summary=enabled)
+        llm_messages = [
+            {"role": "system", "content": system_prompt},
+            *history_messages,
+            {"role": "user", "content": user_message},
+        ]
+
+        full_llm_messages = build_full_llm_messages(memory, user_message)
+        current_request_tokens = count_text_tokens(user_message, model)
+        history_tokens_full = count_message_tokens(full_history, model)
+        history_tokens_sent = count_message_tokens(history_messages, model)
+        prompt_tokens_estimated = count_message_tokens(llm_messages, model)
+        prompt_tokens_full_estimated = count_message_tokens(full_llm_messages, model)
+        summarization_tokens_estimated = sum(
+            int(event.get("summarization_tokens_estimated") or 0)
+            for event in summarization_events
         )
 
-    def _finalize_success_turn(
-        self,
-        client_id,
-        state,
-        user_message,
-        turn,
-        completion,
-        model,
-        allow_prefill=False,
-        provider_warning=None,
-    ):
-        turn["model_called"] = True
-
+        completion = self.llm(messages=llm_messages, **agent_options())
         reply = str(completion.get("content") or "").strip()
         if not reply:
             reply = "OpenRouter/model не вернул видимый текст."
 
-        prompt_tokens_actual = completion.get("prompt_tokens")
+        response_tokens_estimated = count_text_tokens(reply, model)
         response_tokens_actual = completion.get("completion_tokens")
+        prompt_tokens_actual = completion.get("prompt_tokens")
         total_tokens_actual = completion.get("total_tokens")
         turn_cost_actual = completion.get("cost")
-
-        response_tokens_estimated = count_text_tokens(reply, model)
-        turn["prompt_tokens_actual"] = prompt_tokens_actual
-        turn["response_tokens_actual"] = response_tokens_actual
-        turn["response_tokens_estimated"] = response_tokens_estimated
-        turn["total_tokens_actual"] = total_tokens_actual
-        turn["turn_cost_actual"] = turn_cost_actual
-        turn["turn_cost_estimated"] = estimate_turn_cost(
-            prompt_tokens_actual if prompt_tokens_actual is not None else turn["prompt_tokens_estimated"],
+        turn_cost_estimated = estimate_turn_cost(
+            prompt_tokens_actual if prompt_tokens_actual is not None else prompt_tokens_estimated,
             response_tokens_actual if response_tokens_actual is not None else response_tokens_estimated,
             turn_cost_actual,
         )
-        turn["total_tokens_estimated"] = (
-            int(turn["prompt_tokens_estimated"] or 0)
-            + int(turn["response_tokens_estimated"] or 0)
+        tokens_net_saved = (
+            prompt_tokens_full_estimated
+            - prompt_tokens_estimated
+            - summarization_tokens_estimated
+        )
+        total_tokens_estimated = (
+            prompt_tokens_estimated
+            + response_tokens_estimated
+            + summarization_tokens_estimated
         )
 
-        state["messages"].append({"role": "user", "content": user_message})
-        state["messages"].append({"role": "assistant", "content": reply})
-        state.setdefault("turns", []).append(turn)
-        apply_turn_to_cumulative(state["cumulative"], turn)
-        self.memory_store.save(client_id, state)
+        judge = None
+        if run_judge:
+            judge = safe_judge_answer(
+                self.llm,
+                user_message,
+                reply,
+                COMPARE_GROUND_TRUTH,
+                agent_options(),
+            )
 
-        result = build_result(
-            state,
-            reply=reply,
-            metadata=completion_metadata(completion),
-            last_turn=turn,
+        turn_number = len(memory.get("turns", [])) + 1
+        turn = {
+            "turn": turn_number,
+            "status": "ok",
+            "compression_enabled": enabled,
+            "current_request_tokens": current_request_tokens,
+            "history_tokens_full": history_tokens_full,
+            "history_tokens_sent": history_tokens_sent,
+            "history_tokens": history_tokens_sent,
+            "prompt_tokens_full_estimated": prompt_tokens_full_estimated,
+            "prompt_tokens_estimated": prompt_tokens_estimated,
+            "prompt_tokens_actual": prompt_tokens_actual,
+            "response_tokens_estimated": response_tokens_estimated,
+            "response_tokens_actual": response_tokens_actual,
+            "summarization_tokens_estimated": summarization_tokens_estimated,
+            "tokens_net_saved": tokens_net_saved,
+            "total_tokens_estimated": total_tokens_estimated,
+            "total_tokens_actual": total_tokens_actual,
+            "turn_cost_actual": turn_cost_actual,
+            "turn_cost_estimated": turn_cost_estimated,
+            "summarization_events": summarization_events,
+            "history_meta": history_meta,
+            "model_called": True,
+        }
+        if judge is not None:
+            turn["judge"] = judge
+
+        memory["current_chat"]["messages"].append({"role": "user", "content": user_message})
+        memory["current_chat"]["messages"].append({"role": "assistant", "content": reply})
+        trim_stored_messages(memory)
+        memory["current_chat"]["summary"] = str(memory.get("history_summary") or "")
+        memory.setdefault("turns", []).append(turn)
+        trim_stored_turns(memory)
+        apply_turn_to_cumulative(memory.setdefault("cumulative", empty_cumulative()), turn)
+        self.memory_store.save(client_id, memory)
+
+        payload_preview = build_payload_preview(
+            build_system_prompt(memory, include_history_summary=False),
+            history_messages,
+            user_message,
+            memory.get("history_summary"),
+            enabled,
         )
-        if provider_warning:
-            result["provider_warning"] = provider_warning
-            result["error"] = provider_warning
+
+        result = public_memory(memory)
+        result.update({
+            "reply": reply,
+            "metadata": completion_metadata(completion),
+            "last_turn": deepcopy(turn),
+            "current_turn": deepcopy(turn),
+            "payload_preview": payload_preview,
+        })
+        if judge is not None:
+            result["judge"] = judge
         return result
 
 
-def normalize_state(data):
-    state = default_state()
+def normalize_memory(data):
+    memory = default_memory()
     if not isinstance(data, dict):
-        return state
+        return memory
 
-    state["messages"] = clean_messages(data.get("messages"))
-    turns = data.get("turns")
-    state["turns"] = turns if isinstance(turns, list) else []
+    for key in ("created_at", "updated_at", "profile", "current_chat", "archived_chats"):
+        if key in data:
+            memory[key] = data[key]
 
-    cumulative = data.get("cumulative")
-    if isinstance(cumulative, dict):
-        base = empty_cumulative()
+    memory["history_summary"] = str(data.get("history_summary") or "")
+    memory["turns"] = data.get("turns") if isinstance(data.get("turns"), list) else []
+    memory["cumulative"] = normalize_cumulative(data.get("cumulative"))
+
+    compression = data.get("compression")
+    if isinstance(compression, dict):
+        base = default_compression()
         for key in base:
-            if key in cumulative:
-                base[key] = cumulative[key]
-        state["cumulative"] = base
-    return state
+            if key in compression:
+                base[key] = compression[key]
+        memory["compression"] = base
+    ensure_compression_fields(memory)
+
+    profile = memory.get("profile") if isinstance(memory.get("profile"), dict) else {}
+    memory["profile"] = {
+        "style": str(profile.get("style") or ""),
+        "facts": clean_items(profile.get("facts")),
+        "inferences": clean_items(profile.get("inferences")),
+    }
+
+    current = memory.get("current_chat") if isinstance(memory.get("current_chat"), dict) else {}
+    memory["current_chat"] = {
+        "id": str(current.get("id") or new_chat_id()),
+        "started_at": str(current.get("started_at") or utc_now()),
+        "summary": str(current.get("summary") or ""),
+        "messages": clean_messages(current.get("messages"), limit=None),
+    }
+
+    archived = memory.get("archived_chats")
+    if not isinstance(archived, list):
+        archived = []
+    memory["archived_chats"] = normalize_archived_chats(archived)
+    return memory
 
 
-def public_state(state):
-    context_limit = context_limit_value()
-    pricing = pricing_state()
-    last_turn = state.get("turns", [])[-1] if state.get("turns") else None
-    prompt_tokens_estimated = last_turn.get("prompt_tokens_estimated") if last_turn else 0
-    projected_total = (
-        (last_turn.get("projected_total_tokens") if last_turn else 0)
-        or prompt_tokens_estimated
-    )
+def normalize_cumulative(value):
+    base = empty_cumulative()
+    if not isinstance(value, dict):
+        return base
+    for key in base:
+        if key in value:
+            base[key] = value[key]
+    return base
 
+
+def public_memory(memory):
+    ensure_compression_fields(memory)
+    last_turn = memory.get("turns", [])[-1] if memory.get("turns") else None
+    config = compression_config()
     return {
-        "messages": public_messages(state.get("messages", [])),
-        "turns": deepcopy(state.get("turns", [])),
-        "cumulative": deepcopy(state.get("cumulative", empty_cumulative())),
+        "messages": deepcopy(memory.get("current_chat", {}).get("messages", [])),
+        "profile": deepcopy(memory.get("profile", {})),
+        "archived_chats": public_archived_chats(memory.get("archived_chats", [])),
+        "history_summary": memory.get("history_summary", ""),
+        "compression": deepcopy(memory.get("compression", default_compression())),
+        "turns": deepcopy(memory.get("turns", [])),
+        "cumulative": deepcopy(memory.get("cumulative", empty_cumulative())),
         "current_turn": deepcopy(last_turn) if last_turn else None,
-        "context_limit": context_limit,
-        "openrouter_model_context": openrouter_model_context(),
-        "response_budget": max_tokens_value(),
         "model": model_value(),
         "tokenizer": tokenizer_name(),
-        "pricing": pricing,
-        "prompt_usage": {
-            "prompt_tokens_estimated": prompt_tokens_estimated,
-            "context_limit": context_limit,
-            "response_budget": max_tokens_value(),
-            "projected_total_tokens": projected_total,
-            "remaining_tokens": max(0, context_limit - projected_total),
-        },
+        "compression_config": config,
+        "pricing": pricing_state(),
     }
 
 
-def build_result(state, reply="", metadata=None, overflow=None, provider_error=None, last_turn=None, error=None):
-    result = public_state(state)
-    result["reply"] = reply
-    if metadata:
-        result["metadata"] = metadata
-    if overflow:
-        result["overflow"] = overflow
-        result["error"] = error or format_overflow_message(overflow)
-    if provider_error:
-        result["provider_error"] = provider_error
-        result["error"] = error or format_provider_error_message(provider_error)
-    elif error:
-        result["error"] = error
-    if last_turn:
-        result["last_turn"] = deepcopy(last_turn)
-    return result
+def token_summary(result):
+    cumulative = result.get("cumulative") or {}
+    return {
+        "cumulative_prompt_estimated": cumulative.get("prompt_tokens_estimated", 0),
+        "cumulative_prompt_full_estimated": cumulative.get("prompt_tokens_full_estimated", 0),
+        "cumulative_summarization_estimated": cumulative.get("summarization_tokens_estimated", 0),
+        "cumulative_total_estimated": cumulative.get("total_tokens_estimated", 0),
+        "cumulative_net_saved": cumulative.get("tokens_net_saved", 0),
+        "final_prompt_estimated": (result.get("last_turn") or {}).get("prompt_tokens_estimated", 0),
+        "final_prompt_full_estimated": (result.get("last_turn") or {}).get("prompt_tokens_full_estimated", 0),
+    }
 
 
-def format_provider_error_message(provider_error):
-    status = provider_error.get("http_status")
-    prefix = f"OpenRouter HTTP {status}: " if status else "OpenRouter error: "
-    suffix = (
-        " Context-compression was disabled for this request."
-        if provider_error.get("context_compression_disabled")
-        else ""
-    )
-    return prefix + str(provider_error.get("message") or "Unknown provider error") + suffix
-
-
-def format_overflow_message(overflow):
-    return (
-        "Preflight overflow: prompt "
-        f"{overflow['prompt_tokens_estimated']} + budget "
-        f"{overflow['response_budget']} > limit "
-        f"{overflow['context_limit']} (over by {overflow['over_by']}). "
-        "Model was not called."
-    )
-
-
-def public_messages(messages):
-    preview_limit = message_preview_chars()
-    public = []
-    for item in messages or []:
-        if not isinstance(item, dict):
-            continue
-        content = str(item.get("content") or "")
-        entry = {
-            "role": item.get("role"),
-            "content": content,
-        }
-        if len(content) > preview_limit:
-            entry["content"] = (
-                f"{content[:preview_limit]}… "
-                f"[truncated: {len(content)} chars total, showing {preview_limit}]"
-            )
-            entry["content_truncated"] = True
-            entry["content_length"] = len(content)
-        public.append(entry)
-    return public
-
-
-def build_llm_messages(history_messages, user_message):
+def public_archived_chats(chats):
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *history_messages,
+        {
+            "id": chat.get("id", ""),
+            "started_at": chat.get("started_at", ""),
+            "ended_at": chat.get("ended_at", ""),
+            "summary": chat.get("summary", ""),
+            "message_count": len(chat.get("messages") or []),
+        }
+        for chat in chats
+        if isinstance(chat, dict)
+    ]
+
+
+def build_full_llm_messages(memory, user_message):
+    messages = clean_messages(memory["current_chat"]["messages"], limit=None)
+    return [
+        {"role": "system", "content": build_system_prompt(memory, include_history_summary=False)},
+        *messages,
         {"role": "user", "content": user_message},
     ]
 
 
-def clean_messages(value):
+def build_system_prompt(memory, include_history_summary=False):
+    profile = memory.get("profile", {})
+    archived = memory.get("archived_chats", [])[-MAX_ARCHIVED_SUMMARIES:]
+    archived_text = "\n".join(
+        f"- {item.get('summary', '').strip()}"
+        for item in archived
+        if item.get("summary")
+    )
+    facts_text = "\n".join(f"- {item}" for item in profile.get("facts", [])) or "- none"
+    inferences_text = "\n".join(f"- {item}" for item in profile.get("inferences", [])) or "- none"
+    style = profile.get("style") or "No stable style preference recorded yet."
+    summaries = archived_text or "- none"
+
+    base = (
+        "You are a helpful chat assistant in a context-compression demo.\n"
+        "Keep answers concise unless the user asks for detail.\n"
+        "Current user message wins over any summary.\n\n"
+        f"Preferred communication style:\n{style}\n\n"
+        f"Known user facts:\n{facts_text}\n\n"
+        f"Tentative inferences about the user:\n{inferences_text}\n\n"
+        f"Previous chat summaries:\n{summaries}"
+    )
+    if include_history_summary:
+        return append_summary_block(base, memory.get("history_summary"))
+    return base
+
+
+def agent_options():
+    return {
+        "model": model_value(),
+        "provider": DEFAULT_PROVIDER,
+        "include_reasoning": False,
+        "reasoning": REASONING_EXCLUDED,
+    }
+
+
+def apply_turn_to_cumulative(cumulative, turn):
+    cumulative["prompt_tokens_estimated"] += int(turn.get("prompt_tokens_estimated") or 0)
+    cumulative["prompt_tokens_full_estimated"] += int(turn.get("prompt_tokens_full_estimated") or 0)
+    cumulative["response_tokens_estimated"] += int(turn.get("response_tokens_estimated") or 0)
+    cumulative["summarization_tokens_estimated"] += int(turn.get("summarization_tokens_estimated") or 0)
+    cumulative["total_tokens_estimated"] += int(turn.get("total_tokens_estimated") or 0)
+    cumulative["tokens_net_saved"] += int(turn.get("tokens_net_saved") or 0)
+
+    if turn.get("response_tokens_actual") is not None:
+        cumulative["response_tokens_actual"] += int(turn["response_tokens_actual"])
+    if turn.get("total_tokens_actual") is not None:
+        cumulative["total_tokens_actual"] += int(turn["total_tokens_actual"])
+
+    estimated = turn.get("turn_cost_estimated")
+    if estimated is not None:
+        cumulative["cost_estimated"] += float(estimated)
+    actual = turn.get("turn_cost_actual")
+    if actual is not None:
+        cumulative["cost_actual"] += float(actual)
+
+
+def archive_current_chat(memory):
+    current = memory.get("current_chat", {})
+    messages = current.get("messages") or []
+    summary = str(memory.get("history_summary") or current.get("summary") or "").strip()
+    if messages:
+        if not summary:
+            summary = fallback_summary(messages)
+        memory["archived_chats"].append({
+            "id": current.get("id") or new_chat_id(),
+            "started_at": current.get("started_at") or utc_now(),
+            "ended_at": utc_now(),
+            "summary": summary[:MAX_SUMMARY_CHARS],
+            "messages": clean_messages(messages, limit=None),
+        })
+
+    memory["current_chat"] = {
+        "id": new_chat_id(),
+        "started_at": utc_now(),
+        "summary": "",
+        "messages": [],
+    }
+    reset_compression(memory)
+
+
+def trim_stored_messages(memory):
+    limit = max_stored_messages()
+    messages = memory.get("current_chat", {}).get("messages") or []
+    if len(messages) <= limit:
+        return
+    dropped = len(messages) - limit
+    memory["current_chat"]["messages"] = messages[-limit:]
+    compression = memory.get("compression")
+    if isinstance(compression, dict):
+        summarized_through = int(compression.get("summarized_through") or 0)
+        compression["summarized_through"] = max(0, summarized_through - dropped)
+
+
+def trim_stored_turns(memory):
+    limit = max_stored_turns()
+    turns = memory.get("turns") or []
+    if len(turns) > limit:
+        memory["turns"] = turns[-limit:]
+
+
+def max_stored_messages():
+    return env_int("MAX_STORED_MESSAGES", DEFAULT_MAX_STORED_MESSAGES)
+
+
+def max_stored_turns():
+    return env_int("MAX_STORED_TURNS", DEFAULT_MAX_STORED_TURNS)
+
+
+def env_int(name, default):
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def fallback_summary(messages):
+    text = " ".join(
+        f"{item.get('role')}: {item.get('content')}"
+        for item in messages[-6:]
+        if isinstance(item, dict)
+    )
+    return text[:MAX_SUMMARY_CHARS]
+
+
+def clean_messages(value, limit=None):
     if not isinstance(value, list):
         return []
     messages = []
@@ -755,28 +659,47 @@ def clean_messages(value):
         content = str(item.get("content") or "").strip()
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
-    return messages
+    if limit is None:
+        return messages
+    return messages[-limit:]
 
 
-def apply_turn_to_cumulative(cumulative, turn):
-    cumulative["prompt_tokens_estimated"] += int(turn.get("prompt_tokens_estimated") or 0)
-    cumulative["response_tokens_estimated"] += int(turn.get("response_tokens_estimated") or 0)
-    cumulative["total_tokens_estimated"] += int(turn.get("total_tokens_estimated") or 0)
+def normalize_archived_chats(value):
+    chats = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary") or "").strip()[:MAX_SUMMARY_CHARS]
+        messages = clean_messages(item.get("messages"), limit=None)
+        if not summary and not messages:
+            continue
+        if not summary:
+            summary = fallback_summary(messages)
+        chats.append({
+            "id": str(item.get("id") or f"legacy-{index + 1}"),
+            "started_at": str(item.get("started_at") or ""),
+            "ended_at": str(item.get("ended_at") or ""),
+            "summary": summary,
+            "messages": messages,
+        })
+    return chats
 
-    if turn.get("prompt_tokens_actual") is not None:
-        cumulative["prompt_tokens_actual"] += int(turn["prompt_tokens_actual"])
-    if turn.get("response_tokens_actual") is not None:
-        cumulative["response_tokens_actual"] += int(turn["response_tokens_actual"])
-    if turn.get("total_tokens_actual") is not None:
-        cumulative["total_tokens_actual"] += int(turn["total_tokens_actual"])
 
-    estimated = turn.get("turn_cost_estimated")
-    if estimated is not None:
-        cumulative["cost_estimated"] += float(estimated)
-
-    actual = turn.get("turn_cost_actual")
-    if actual is not None:
-        cumulative["cost_actual"] += float(actual)
+def clean_items(value):
+    if not isinstance(value, list):
+        return []
+    cleaned = []
+    seen = set()
+    for item in value:
+        text = str(item or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        cleaned.append(text[:500])
+        seen.add(key)
+        if len(cleaned) >= 24:
+            break
+    return cleaned
 
 
 def pricing_state():
@@ -803,203 +726,8 @@ def estimate_turn_cost(prompt_tokens, completion_tokens, actual_cost):
     return prompt_part + completion_part
 
 
-def overflow_filler_message(context_limit, response_budget):
-    target = max(context_limit - response_budget, 256)
-    chunk = OVERFLOW_FILLER
-    repeats = max(1, (target // max(count_text_tokens(chunk), 1)) + 2)
-    return chunk * repeats
-
-
-def build_memory_loss_prefill(messages, model):
-    target_prompt = memory_loss_target_prompt_tokens()
-    response_budget = max_tokens_value()
-    pairs = []
-    working = clean_messages(messages)
-    safety_limit = 800
-
-    while len(pairs) < safety_limit:
-        index = len(pairs) + 1
-        user_text = (
-            f"Ход {index}: продолжи коротко про Python — одно предложение про списки, "
-            "генераторы или декораторы."
-        )
-        assistant_text = memory_loss_filler_block(index)
-        candidate = working + [
-            {"role": "user", "content": user_text},
-            {"role": "assistant", "content": assistant_text},
-        ]
-        prompt_estimated = count_message_tokens(
-            build_llm_messages(candidate, MEMORY_LOSS_RECALL_PROMPT),
-            model,
-        )
-        if prompt_estimated >= target_prompt:
-            break
-        working = candidate
-        pairs.append((user_text, assistant_text))
-
-    return pairs, count_message_tokens(working, model)
-
-
-def memory_loss_filler_block(index):
-    paragraph = MEMORY_LOSS_FILLER * 6
-    return (
-        f"Ход {index}. {paragraph} "
-        f"Это длинный синтетический ответ #{index}, чтобы вытеснить ранние сообщения из окна."
-    )
-
-
-def memory_loss_target_prompt_tokens():
-    model_context = openrouter_model_context()
-    overshoot = env_float("MEMORY_LOSS_OVERSHOOT")
-    if overshoot is None or overshoot <= 0:
-        overshoot = DEFAULT_MEMORY_LOSS_OVERSHOOT
-    return int(model_context * overshoot)
-
-
-def memory_loss_overshoot_value():
-    overshoot = env_float("MEMORY_LOSS_OVERSHOOT")
-    if overshoot is None or overshoot <= 0:
-        return DEFAULT_MEMORY_LOSS_OVERSHOOT
-    return overshoot
-
-
-def memory_loss_token_safety_multiplier():
-    safety = env_float("MEMORY_LOSS_TOKEN_SAFETY")
-    if safety is None or safety <= 0:
-        return DEFAULT_MEMORY_LOSS_TOKEN_SAFETY
-    return safety
-
-
-def memory_loss_recall_max_tokens():
-    return env_int("MEMORY_LOSS_RECALL_MAX_TOKENS", DEFAULT_MEMORY_LOSS_RECALL_MAX_TOKENS)
-
-
-def memory_loss_local_prompt_budget(model_context, response_budget):
-    safety = memory_loss_token_safety_multiplier()
-    return max(256, int((model_context - response_budget) / safety))
-
-
-def evaluate_codeword_recall(reply, expected):
-    if not reply:
-        return False
-    reply_clean = re.sub(r"[^A-Za-z0-9]", "", str(reply)).upper()
-    expected_clean = re.sub(r"[^A-Za-z0-9]", "", str(expected)).upper()
-    if not expected_clean:
-        return False
-    return reply_clean == expected_clean or expected_clean in reply_clean
-
-
-def truncate_history_for_model_window(
-    history_messages,
-    user_message,
-    model,
-    prompt_budget,
-):
-    working = clean_messages(history_messages)
-    original_len = len(working)
-
-    while working:
-        prompt_estimated = count_message_tokens(
-            build_llm_messages(working, user_message),
-            model,
-        )
-        if prompt_estimated <= prompt_budget:
-            break
-        working = working[1:]
-
-    return working, original_len - len(working)
-
-
-def codeword_in_history(messages, codeword=MEMORY_LOSS_CODEWORD):
-    return any(codeword in str(item.get("content") or "") for item in messages)
-
-
-def build_memory_loss_result(
-    reply,
-    prefill_pairs,
-    prefill_history_tokens,
-    recall_turn,
-    target_prompt_tokens,
-):
-    recalled = evaluate_codeword_recall(reply, MEMORY_LOSS_CODEWORD)
-    model_context = openrouter_model_context()
-    prompt_estimated = int(recall_turn.get("prompt_tokens_estimated") or 0)
-    prompt_actual = recall_turn.get("prompt_tokens_actual")
-    prompt_full_estimated = int(recall_turn.get("prompt_tokens_full_estimated") or 0)
-    dropped_messages = int(recall_turn.get("messages_dropped_from_head") or 0)
-    codeword_in_payload = bool(recall_turn.get("codeword_in_llm_payload"))
-    overshoot = memory_loss_overshoot_value()
-
-    if recalled:
-        summary = (
-            f"Модель ответила «{MEMORY_LOSS_CODEWORD}». "
-            f"В payload {'есть' if codeword_in_payload else 'нет'} кодовое слово; "
-            f"отброшено {dropped_messages} старых сообщений."
-        )
-    else:
-        summary = (
-            f"Модель ответила «{str(reply).strip()}», ожидалось «{MEMORY_LOSS_CODEWORD}». "
-            f"Полная история ≈{prompt_full_estimated} tokens, в API ушло ≈{prompt_estimated} "
-            f"(actual {prompt_actual if prompt_actual is not None else '—'}). "
-            f"С начала истории отброшено {dropped_messages} сообщений — "
-            f"{'включая' if not codeword_in_payload else 'но'} сообщение с кодовым словом "
-            f"{'не попало' if not codeword_in_payload else 'всё ещё попало'} в prompt."
-        )
-
-    return {
-        "demo": "memory_loss",
-        "expected_codeword": MEMORY_LOSS_CODEWORD,
-        "model_answer": str(reply or "").strip(),
-        "recalled_correctly": recalled,
-        "prefill_pairs": prefill_pairs,
-        "prefill_history_tokens": prefill_history_tokens,
-        "recall_prompt_tokens_estimated": prompt_estimated,
-        "recall_prompt_tokens_actual": prompt_actual,
-        "recall_prompt_tokens_full_estimated": prompt_full_estimated,
-        "local_prompt_budget": recall_turn.get("local_prompt_budget"),
-        "messages_dropped_from_head": dropped_messages,
-        "codeword_in_llm_payload": codeword_in_payload,
-        "target_prompt_tokens": target_prompt_tokens,
-        "overshoot_ratio": overshoot,
-        "model_context_limit": model_context,
-        "context_compression_disabled": True,
-        "truncation_strategy": recall_turn.get("truncation_strategy"),
-        "summary": summary,
-    }
-
-
-def openrouter_model_context():
-    return env_int("OPENROUTER_MODEL_CONTEXT", DEFAULT_OPENROUTER_MODEL_CONTEXT)
-
-
-def provider_overflow_max_tokens_value():
-    return openrouter_model_context()
-
-
-def message_preview_chars():
-    return env_int("MESSAGE_PREVIEW_CHARS", DEFAULT_MESSAGE_PREVIEW_CHARS)
-
-
-def context_limit_value():
-    return env_int("TOKEN_CONTEXT_LIMIT", DEFAULT_CONTEXT_LIMIT)
-
-
-def max_tokens_value():
-    return env_int("TOKEN_MAX_TOKENS", DEFAULT_MAX_TOKENS)
-
-
 def model_value():
     return os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
-
-
-def env_int(name, default):
-    raw = os.getenv(name)
-    if raw is None or raw == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
 
 
 def env_float(name):

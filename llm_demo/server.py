@@ -124,15 +124,17 @@ def chat():
         return error_response("Request body must be application/json", 400)
 
     payload = request.get_json(silent=True) or {}
+    compression = payload.get("compression")
+    if compression is not None:
+        compression = bool(compression)
+
     try:
-        result = agent.respond(g.client_id, payload.get("message", ""))
+        result = agent.respond(g.client_id, payload.get("message", ""), compression=compression)
     except ValueError as exc:
         return error_response(str(exc), 400)
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
 
-    if result.get("overflow"):
-        return jsonify(result), 413
     return jsonify(result)
 
 
@@ -141,61 +143,12 @@ def clear_chat():
     return jsonify(agent.clear(g.client_id))
 
 
-@app.post("/api/demo/short")
-def demo_short():
+@app.post("/api/demo/compression-compare")
+def demo_compression_compare():
     try:
-        result = agent.run_demo_short(g.client_id)
+        result = agent.run_demo_compression_compare(g.client_id)
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
-    return jsonify(result)
-
-
-@app.post("/api/demo/long")
-def demo_long():
-    try:
-        result = agent.run_demo_long(g.client_id)
-    except OpenRouterError as exc:
-        return error_response(str(exc), exc.status)
-    return jsonify(result)
-
-
-@app.post("/api/demo/overflow")
-def demo_overflow():
-    result = agent.run_demo_overflow(g.client_id)
-    return jsonify(result), 413
-
-
-@app.post("/api/demo/provider-overflow")
-def demo_provider_overflow():
-    try:
-        result = agent.run_demo_provider_overflow(g.client_id)
-    except OpenRouterError as exc:
-        return error_response(str(exc), exc.status)
-
-    if result.get("provider_error"):
-        status = int(result["provider_error"].get("http_status") or 502)
-        return jsonify(result), status
-    return jsonify(result)
-
-
-@app.post("/api/demo/memory-loss")
-def demo_memory_loss():
-    try:
-        result = agent.run_demo_memory_loss(g.client_id)
-    except OpenRouterError as exc:
-        return error_response(str(exc), exc.status)
-
-    if result.get("memory_loss", {}).get("provider_error") or (
-        result.get("last_turn", {}).get("status") == "provider_error"
-        and result.get("last_turn", {}).get("demo") == "memory_loss"
-    ):
-        status = int(
-            (result.get("provider_error") or result.get("last_turn", {}).get("provider_error") or {}).get(
-                "http_status"
-            )
-            or 502
-        )
-        return jsonify(result), status
     return jsonify(result)
 
 

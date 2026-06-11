@@ -7,7 +7,7 @@ Tokenizer choice:
   four Unicode characters, with a minimum of one token for non-empty text.
 
 OpenRouter usage fields remain the source of truth for actual token counts.
-Local estimates exist for preflight overflow checks and UI growth demos.
+Local estimates exist for UI growth demos and compression before/after comparison.
 """
 
 import math
