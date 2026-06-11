@@ -19,6 +19,25 @@ Each turn records:
 
 Overflow turns set `status=overflow`, keep the turn in `turns[]`, and do not call OpenRouter.
 
+Provider overflow demo calls OpenRouter with:
+
+```json
+"plugins": [{"id": "context-compression", "enabled": false}]
+```
+
+Preflight is skipped for that path. Expected result: HTTP 400 from OpenRouter with a clear context-length error.
+
+Default model is `meta-llama/llama-3-8b-instruct` (8K context, ~$0.14/$0.14 per 1M on OpenRouter). `google/gemma-2-9b-it` was removed from the OpenRouter catalog (404). Provider overflow sets `max_tokens = OPENROUTER_MODEL_CONTEXT` (default `8192`); with a short prompt that exceeds the model window and should fail at the provider. If the model window is larger than `OPENROUTER_MODEL_CONTEXT`, the request may unexpectedly succeed and the UI shows `provider_unexpected_ok`.
+
+Memory-loss demo (`POST /api/demo/memory-loss`):
+
+- turn 1: ask model to remember codeword `BLUEFOX`;
+- prefill synthetic user/assistant pairs until full history overshoots the model window (for UI growth);
+- final turn: **drop oldest messages** until the recall prompt fits `OPENROUTER_MODEL_CONTEXT`, call OpenRouter with `context-compression` disabled;
+- UI compares expected vs model answer and shows `prompt_tokens_full_estimated` vs `prompt_tokens_actual`.
+
+OpenRouter default compression can shrink ~16k estimated chars to ~2k actual tokens while **keeping** the codeword — so the demo uses explicit head truncation instead of relying on provider compression.
+
 ## Config
 
 Environment variables:

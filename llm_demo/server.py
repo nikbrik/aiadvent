@@ -165,6 +165,40 @@ def demo_overflow():
     return jsonify(result), 413
 
 
+@app.post("/api/demo/provider-overflow")
+def demo_provider_overflow():
+    try:
+        result = agent.run_demo_provider_overflow(g.client_id)
+    except OpenRouterError as exc:
+        return error_response(str(exc), exc.status)
+
+    if result.get("provider_error"):
+        status = int(result["provider_error"].get("http_status") or 502)
+        return jsonify(result), status
+    return jsonify(result)
+
+
+@app.post("/api/demo/memory-loss")
+def demo_memory_loss():
+    try:
+        result = agent.run_demo_memory_loss(g.client_id)
+    except OpenRouterError as exc:
+        return error_response(str(exc), exc.status)
+
+    if result.get("memory_loss", {}).get("provider_error") or (
+        result.get("last_turn", {}).get("status") == "provider_error"
+        and result.get("last_turn", {}).get("demo") == "memory_loss"
+    ):
+        status = int(
+            (result.get("provider_error") or result.get("last_turn", {}).get("provider_error") or {}).get(
+                "http_status"
+            )
+            or 502
+        )
+        return jsonify(result), status
+    return jsonify(result)
+
+
 def error_response(message, status):
     return jsonify({"error": message, "status": status}), status
 
@@ -172,4 +206,4 @@ def error_response(message, status):
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "5000"))
-    app.run(host=host, port=port)
+    app.run(host=host, port=port, threaded=True)

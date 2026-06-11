@@ -70,26 +70,32 @@ def indent_block(text: str, prefix: str = "  ") -> str:
     return "\n".join(f"{prefix}{line}" for line in text.splitlines())
 
 
-def format_json(data: Any) -> str:
+def format_json(data: Any, max_chars: Optional[int] = None) -> str:
+    if max_chars is None:
+        max_chars = log_body_char_limit()
+
     if data is None:
         return "(empty)"
 
     if isinstance(data, (dict, list)):
-        return json.dumps(data, ensure_ascii=False, indent=2)
-
-    if isinstance(data, str):
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+    elif isinstance(data, str):
         stripped = data.strip()
         if not stripped:
             return "(empty)"
         try:
-            return json.dumps(json.loads(stripped), ensure_ascii=False, indent=2)
+            text = json.dumps(json.loads(stripped), ensure_ascii=False, indent=2)
         except (json.JSONDecodeError, TypeError):
-            return data
+            text = data
+    elif isinstance(data, bytes):
+        return format_json(data.decode("utf-8", errors="replace"), max_chars=max_chars)
+    else:
+        text = str(data)
 
-    if isinstance(data, bytes):
-        return format_json(data.decode("utf-8", errors="replace"))
-
-    return str(data)
+    if len(text) > max_chars:
+        hidden = len(text) - max_chars
+        return f"{text[:max_chars]}\n... [{hidden} chars truncated in log]"
+    return text
 
 
 def format_headers(headers: Optional[Mapping[str, str]]) -> str:
@@ -105,6 +111,14 @@ def format_headers(headers: Optional[Mapping[str, str]]) -> str:
             value_part = value
         lines.append(f"  {_c('36', key)}{_c('90', ': ')}{value_part}")
     return "\n".join(lines)
+
+
+def log_body_char_limit() -> int:
+    raw = os.getenv("LLM_DEMO_LOG_BODY_LIMIT", str(8000))
+    try:
+        return max(500, int(raw))
+    except ValueError:
+        return 8000
 
 
 def log_exchange(

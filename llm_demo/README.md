@@ -30,7 +30,12 @@
 
 - **Short** — 2–3 коротких сообщения;
 - **Long** — длинная серия сообщений, виден рост history/prompt cost;
-- **Overflow** — локальный сценарий переполнения без OpenRouter;
+- **Preflight** — локальный overflow до OpenRouter;
+- **OpenRouter** — реальный provider overflow (`context-compression` off);
+- **Memory loss** — кодовое слово + длинная история + вопрос «что было в начале?» (2 вызова OpenRouter);
+
+По умолчанию модель **`meta-llama/llama-3-8b-instruct`**: окно **8K**, дёшево (~$0.14/$0.14 за 1M), чтобы кнопка **OpenRouter** стабильно ловила 400 от провайдера. `OPENROUTER_MODEL_CONTEXT` должен совпадать с окном модели.
+
 - **Clear** — сброс диалога и stats.
 
 ## API
@@ -42,7 +47,9 @@
 | `DELETE` | `/api/chat` | Очистить диалог и token stats |
 | `POST` | `/api/demo/short` | Короткий demo-сценарий |
 | `POST` | `/api/demo/long` | Длинный demo-сценарий |
-| `POST` | `/api/demo/overflow` | Overflow без OpenRouter call |
+| `POST` | `/api/demo/overflow` | Preflight overflow без OpenRouter call |
+| `POST` | `/api/demo/provider-overflow` | Provider overflow через OpenRouter (`context-compression` off) |
+| `POST` | `/api/demo/memory-loss` | Потеря раннего контекста: BLUEFOX → filler → recall (2 OpenRouter calls) |
 
 ## Запуск
 
@@ -68,11 +75,16 @@ http://localhost:5000
 | Переменная | Описание |
 | --- | --- |
 | `OPENROUTER_API_KEY` | API-ключ OpenRouter (нужен для Short/Long и обычного чата) |
-| `OPENROUTER_MODEL` | Модель OpenRouter, default `deepseek/deepseek-v4-flash` |
+| `OPENROUTER_MODEL` | Модель OpenRouter, default `meta-llama/llama-3-8b-instruct` (8K context, ~$0.14/$0.14 за 1M) |
 | `TOKEN_CONTEXT_LIMIT` | Лимит контекста для preflight, default `4096` |
 | `TOKEN_MAX_TOKENS` | Response budget в preflight, default `512` |
 | `PROMPT_PRICE_PER_1M_TOKENS` | Опционально: цена prompt для estimated cost |
 | `COMPLETION_PRICE_PER_1M_TOKENS` | Опционально: цена completion для estimated cost |
+| `OPENROUTER_MODEL_CONTEXT` | Context window модели для provider overflow (`max_tokens` = это значение), default `8192` (должен совпадать с окном модели) |
+| `MEMORY_LOSS_OVERSHOOT` | Во сколько раз полная история длиннее окна модели (filler), default `2.0` |
+| `MEMORY_LOSS_TOKEN_SAFETY` | Запас local est. vs реальный tokenizer провайдера, default `4.0` |
+| `MEMORY_LOSS_RECALL_MAX_TOKENS` | max_tokens на recall-ходе сценария ⑤, default `128` |
+| `MESSAGE_PREVIEW_CHARS` | Сколько символов сообщения отдавать в UI/API, default `400` |
 | `HOST` | Host Flask, default `0.0.0.0` |
 | `PORT` | Port Flask, default `5000` |
 

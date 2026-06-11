@@ -3,18 +3,50 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AI Advent Day 8 Tokens</title>
+    <title>AI Advent Day 8 — Токены</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
         <p class="eyebrow">AI Advent · День 8</p>
-        <h1>Token Accounting</h1>
+        <h1>Работа с токенами</h1>
         <p class="lead">
-          Локальная оценка prompt до вызова модели, фактические usage от OpenRouter после ответа,
-          рост стоимости по ходу диалога и preflight overflow без траты ключа.
+          Агент считает токены текущего запроса, всей истории и ответа модели — до и после вызова OpenRouter.
+          Сравните короткий и длинный диалог, посмотрите overflow — и отдельно сценарий «потеря памяти», когда модель отвечает, но забывает начало.
         </p>
+      </section>
+
+      <section class="assignment-panel panel">
+        <h2>Задание на экране</h2>
+        <div class="assignment-grid">
+          <article class="assignment-card">
+            <h3>Считаем</h3>
+            <ul>
+              <li>токены <strong>текущего запроса</strong></li>
+              <li>токены <strong>истории диалога</strong> в prompt</li>
+              <li>токены <strong>ответа модели</strong></li>
+            </ul>
+          </article>
+          <article class="assignment-card">
+            <h3>Сравниваем</h3>
+            <ol class="demo-steps">
+              <li><button type="button" class="link-button" data-run="short">Короткий</button> — мало tokens/cost</li>
+              <li><button type="button" class="link-button" data-run="long">Длинный</button> — history и cost растут</li>
+              <li><button type="button" class="link-button" data-run="preflight">Переполнение (local)</button> — блок до API</li>
+              <li><button type="button" class="link-button" data-run="provider">Переполнение (OpenRouter)</button> — ответ провайдера</li>
+              <li><button type="button" class="link-button" data-run="memory">Потеря памяти</button> — модель «забывает» начало</li>
+            </ol>
+          </article>
+          <article class="assignment-card">
+            <h3>Смотрим</h3>
+            <ul>
+              <li>рост tokens/cost в таблице ходов</li>
+              <li>prompt vs лимит контекста</li>
+              <li>что именно сломалось при overflow</li>
+            </ul>
+          </article>
+        </div>
       </section>
 
       <section class="workspace">
@@ -29,29 +61,43 @@
           <form id="chat-form" class="composer">
             <label class="field">
               <span>Сообщение</span>
-              <textarea id="message" rows="4" required placeholder="Напишите агенту..."></textarea>
+              <textarea id="message" rows="3" required placeholder="Или запустите сценарий кнопками ниже…"></textarea>
             </label>
             <div class="actions">
               <button id="send-button" class="primary-button" type="submit">Отправить</button>
-              <button id="short-button" class="demo-button" type="button">Short</button>
-              <button id="long-button" class="demo-button" type="button">Long</button>
-              <button id="overflow-button" class="warn-button" type="button">Overflow</button>
-              <button id="clear-button" class="danger-button" type="button">Clear</button>
+              <button id="short-button" class="demo-button" type="button">① Короткий</button>
+              <button id="long-button" class="demo-button" type="button">② Длинный</button>
+              <button id="overflow-button" class="warn-button" type="button">③ Local overflow</button>
+              <button id="provider-overflow-button" class="danger-button" type="button">④ OpenRouter</button>
+              <button id="memory-loss-button" class="memory-button" type="button">⑤ Потеря памяти</button>
+              <button id="clear-button" class="secondary-button" type="button">Clear</button>
             </div>
           </form>
 
           <div id="alert" class="alert hidden" role="alert"></div>
+          <div id="lesson" class="lesson hidden"></div>
           <div id="metadata" class="metadata">Метаданные появятся после ответа.</div>
         </section>
 
         <aside class="panel stats-panel">
           <div class="panel-head">
-            <h2>Токены и стоимость</h2>
+            <h2>Token accounting</h2>
           </div>
 
+          <section class="stats-section highlight-section">
+            <h3>Три счётчика задания · текущий ход</h3>
+            <div id="token-triple" class="token-triple"></div>
+          </section>
+
           <section class="stats-section">
-            <h3>Текущий ход</h3>
-            <dl id="current-turn" class="stats-grid"></dl>
+            <h3>Короткий vs длинный</h3>
+            <div id="compare-panel" class="compare-panel"></div>
+          </section>
+
+          <section class="stats-section">
+            <h3>Рост по диалогу</h3>
+            <div id="growth-chart" class="growth-chart"></div>
+            <dl id="cumulative" class="stats-grid compact-grid"></dl>
           </section>
 
           <section class="stats-section">
@@ -59,17 +105,17 @@
             <div class="limit-bar-wrap">
               <div id="limit-bar" class="limit-bar"></div>
             </div>
-            <dl id="prompt-usage" class="stats-grid"></dl>
+            <dl id="prompt-usage" class="stats-grid compact-grid"></dl>
           </section>
 
           <section class="stats-section">
-            <h3>Накопительно</h3>
-            <dl id="cumulative" class="stats-grid"></dl>
+            <h3>Что сломалось</h3>
+            <div id="breakage-panel" class="breakage-panel"></div>
           </section>
 
           <section class="stats-section">
-            <h3>Конфиг</h3>
-            <dl id="config" class="stats-grid"></dl>
+            <h3>Детали хода</h3>
+            <dl id="current-turn" class="stats-grid compact-grid"></dl>
           </section>
 
           <section class="stats-section">
@@ -80,13 +126,10 @@
                   <tr>
                     <th>#</th>
                     <th>status</th>
-                    <th>request</th>
-                    <th>history</th>
-                    <th>prompt est</th>
-                    <th>prompt act</th>
-                    <th>resp est</th>
-                    <th>resp act</th>
-                    <th>total est</th>
+                    <th>запрос</th>
+                    <th>история</th>
+                    <th>prompt</th>
+                    <th>ответ</th>
                     <th>cost</th>
                   </tr>
                 </thead>
@@ -94,22 +137,36 @@
               </table>
             </div>
           </section>
+
+          <section class="stats-section">
+            <h3>Конфиг</h3>
+            <dl id="config" class="stats-grid compact-grid"></dl>
+          </section>
         </aside>
       </section>
     </main>
 
     <script>
+      const COMPARE_KEY = "day8_demo_snapshots";
+
       const form = document.querySelector("#chat-form");
       const messageInput = document.querySelector("#message");
       const messagesBox = document.querySelector("#messages");
       const statusBox = document.querySelector("#status");
       const metadataBox = document.querySelector("#metadata");
       const alertBox = document.querySelector("#alert");
+      const lessonBox = document.querySelector("#lesson");
       const sendButton = document.querySelector("#send-button");
       const shortButton = document.querySelector("#short-button");
       const longButton = document.querySelector("#long-button");
       const overflowButton = document.querySelector("#overflow-button");
+      const providerOverflowButton = document.querySelector("#provider-overflow-button");
+      const memoryLossButton = document.querySelector("#memory-loss-button");
       const clearButton = document.querySelector("#clear-button");
+      const tokenTripleBox = document.querySelector("#token-triple");
+      const comparePanel = document.querySelector("#compare-panel");
+      const growthChartBox = document.querySelector("#growth-chart");
+      const breakagePanel = document.querySelector("#breakage-panel");
       const currentTurnBox = document.querySelector("#current-turn");
       const promptUsageBox = document.querySelector("#prompt-usage");
       const cumulativeBox = document.querySelector("#cumulative");
@@ -117,7 +174,21 @@
       const limitBar = document.querySelector("#limit-bar");
       const turnTableBody = document.querySelector("#turn-table tbody");
 
-      const actionButtons = [sendButton, shortButton, longButton, overflowButton, clearButton];
+      const actionButtons = [sendButton, shortButton, longButton, overflowButton, providerOverflowButton, memoryLossButton, clearButton];
+      const demoRunners = {
+        short: () => shortButton.click(),
+        long: () => longButton.click(),
+        preflight: () => overflowButton.click(),
+        provider: () => providerOverflowButton.click(),
+        memory: () => memoryLossButton.click(),
+      };
+
+      document.querySelectorAll("[data-run]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const run = demoRunners[button.dataset.run];
+          if (run) run();
+        });
+      });
 
       function setBusy(isBusy) {
         actionButtons.forEach((button) => {
@@ -141,6 +212,16 @@
         alertBox.textContent = text;
       }
 
+      function showLesson(text, mode = "info") {
+        if (!text) {
+          lessonBox.className = "lesson hidden";
+          lessonBox.textContent = "";
+          return;
+        }
+        lessonBox.className = `lesson ${mode}`;
+        lessonBox.textContent = text;
+      }
+
       function formatNumber(value) {
         if (value === null || value === undefined || value === "") return "—";
         return Number(value).toLocaleString("ru-RU");
@@ -153,7 +234,7 @@
 
       function renderMessages(messages) {
         if (!messages || messages.length === 0) {
-          messagesBox.innerHTML = '<p class="empty-state">Сообщений пока нет.</p>';
+          messagesBox.innerHTML = '<p class="empty-state">Сообщений пока нет. Начните с кнопки «① Короткий».</p>';
           return;
         }
 
@@ -166,6 +247,12 @@
 
           const content = document.createElement("p");
           content.textContent = message.content;
+          if (message.content_truncated) {
+            const note = document.createElement("small");
+            note.className = "truncate-note";
+            note.textContent = ` (в UI показано начало, всего ${message.content_length} символов)`;
+            content.append(note);
+          }
 
           item.append(role, content);
           return item;
@@ -183,6 +270,247 @@
         }));
       }
 
+      function renderTokenTriple(data) {
+        const turn = data.current_turn || data.last_turn;
+        if (!turn) {
+          tokenTripleBox.innerHTML = '<p class="empty-state">Запустите сценарий, чтобы увидеть три счётчика.</p>';
+          return;
+        }
+
+        const cards = [
+          {
+            label: "Текущий запрос",
+            estimated: turn.current_request_tokens,
+            actual: null,
+            hint: "Новое user-сообщение",
+          },
+          {
+            label: "История диалога",
+            estimated: turn.history_tokens,
+            actual: null,
+            hint: "Прошлые user/assistant в prompt",
+          },
+          {
+            label: "Ответ модели",
+            estimated: turn.response_tokens_estimated,
+            actual: turn.response_tokens_actual,
+            hint: turn.model_called ? "После OpenRouter" : "Модель не вызывалась",
+          },
+        ];
+
+        tokenTripleBox.replaceChildren(...cards.map((card) => {
+          const item = document.createElement("article");
+          item.className = "token-card";
+
+          const title = document.createElement("h4");
+          title.textContent = card.label;
+
+          const est = document.createElement("p");
+          est.className = "token-value";
+          est.textContent = formatNumber(card.estimated);
+
+          const sub = document.createElement("p");
+          sub.className = "token-sub";
+          if (card.actual != null) {
+            sub.textContent = `actual: ${formatNumber(card.actual)} · ${card.hint}`;
+          } else {
+            sub.textContent = `estimated · ${card.hint}`;
+          }
+
+          item.append(title, est, sub);
+          return item;
+        }));
+      }
+
+      function snapshotFromData(data) {
+        return {
+          turns: data.turns?.length || 0,
+          history: data.current_turn?.history_tokens ?? 0,
+          prompt: data.current_turn?.prompt_tokens_actual ?? data.current_turn?.prompt_tokens_estimated ?? 0,
+          response: data.current_turn?.response_tokens_actual ?? data.current_turn?.response_tokens_estimated ?? 0,
+          total: data.cumulative?.total_tokens_actual ?? data.cumulative?.total_tokens_estimated ?? 0,
+          cost: data.cumulative?.cost_actual ?? data.cumulative?.cost_estimated ?? 0,
+        };
+      }
+
+      function saveCompareSnapshot(label, data) {
+        const stored = JSON.parse(sessionStorage.getItem(COMPARE_KEY) || "{}");
+        stored[label] = snapshotFromData(data);
+        sessionStorage.setItem(COMPARE_KEY, JSON.stringify(stored));
+        renderComparePanel(stored);
+      }
+
+      function renderComparePanel(stored) {
+        const short = stored?.short;
+        const long = stored?.long;
+
+        if (!short && !long) {
+          comparePanel.innerHTML = '<p class="empty-state">Запустите «① Короткий», затем «② Длинный» — здесь появится сравнение.</p>';
+          return;
+        }
+
+        if (!short || !long) {
+          comparePanel.innerHTML = `<p class="empty-state">${short ? "Есть короткий. Теперь нажмите «② Длинный»." : "Есть длинный. Сначала нажмите «① Короткий» для сравнения."}</p>`;
+          return;
+        }
+
+        const rows = [
+          ["Ходов", short.turns, long.turns],
+          ["History tokens", short.history, long.history],
+          ["Prompt tokens", short.prompt, long.prompt],
+          ["Response tokens", short.response, long.response],
+          ["Total tokens", short.total, long.total],
+          ["Cost ($)", short.cost.toFixed(6), long.cost.toFixed(6)],
+        ];
+
+        comparePanel.replaceChildren(...rows.map(([label, a, b]) => {
+          const row = document.createElement("div");
+          row.className = "compare-row";
+
+          const name = document.createElement("span");
+          name.className = "compare-label";
+          name.textContent = label;
+
+          const shortVal = document.createElement("span");
+          shortVal.className = "compare-short";
+          shortVal.textContent = typeof a === "number" ? formatNumber(a) : a;
+
+          const longVal = document.createElement("span");
+          longVal.className = "compare-long";
+          longVal.textContent = typeof b === "number" ? formatNumber(b) : b;
+
+          const delta = document.createElement("span");
+          delta.className = "compare-delta";
+          if (typeof a === "number" && typeof b === "number") {
+            const diff = b - a;
+            delta.textContent = diff > 0 ? `+${formatNumber(diff)}` : formatNumber(diff);
+            delta.classList.add(diff > 0 ? "up" : "flat");
+          } else {
+            delta.textContent = "—";
+          }
+
+          row.append(name, shortVal, longVal, delta);
+          return row;
+        }));
+      }
+
+      function renderGrowthChart(turns) {
+        if (!turns || turns.length === 0) {
+          growthChartBox.innerHTML = '<p class="empty-state">Таблица ходов покажет, как history и prompt растут с каждым сообщением.</p>';
+          return;
+        }
+
+        const maxHistory = Math.max(...turns.map((turn) => turn.history_tokens || 0), 1);
+
+        growthChartBox.replaceChildren(...turns.map((turn) => {
+          const row = document.createElement("div");
+          row.className = "growth-row";
+
+          const label = document.createElement("span");
+          label.className = "growth-label";
+          label.textContent = `#${turn.turn}`;
+
+          const barWrap = document.createElement("div");
+          barWrap.className = "growth-bar-wrap";
+
+          const historyBar = document.createElement("div");
+          historyBar.className = "growth-bar history";
+          historyBar.style.width = `${Math.max(4, (turn.history_tokens / maxHistory) * 100)}%`;
+          historyBar.title = `history: ${turn.history_tokens}`;
+
+          const promptBar = document.createElement("div");
+          promptBar.className = "growth-bar prompt";
+          promptBar.style.width = `${Math.max(4, (turn.prompt_tokens_estimated / (turn.prompt_tokens_estimated + 1)) * 100)}%`;
+          promptBar.title = `prompt est: ${turn.prompt_tokens_estimated}`;
+
+          barWrap.append(historyBar, promptBar);
+
+          const meta = document.createElement("span");
+          meta.className = "growth-meta";
+          meta.textContent = `h ${turn.history_tokens} · p ${turn.prompt_tokens_estimated}`;
+
+          row.append(label, barWrap, meta);
+          return row;
+        }));
+      }
+
+      function renderBreakagePanel(data) {
+        const turn = data.current_turn || data.last_turn;
+        if (!turn) {
+          breakagePanel.innerHTML = '<p class="empty-state">При overflow здесь будет объяснение, что именно сломалось.</p>';
+          return;
+        }
+
+        if (turn.status === "overflow") {
+          const o = turn.overflow || data.overflow || {};
+          breakagePanel.innerHTML = `
+            <p class="breakage-title">Local preflight overflow</p>
+            <ul class="breakage-list">
+              <li>Модель <strong>не вызывалась</strong></li>
+              <li>Prompt estimated: <strong>${formatNumber(o.prompt_tokens_estimated)}</strong></li>
+              <li>+ response budget: <strong>${formatNumber(o.response_budget)}</strong></li>
+              <li>&gt; local limit: <strong>${formatNumber(o.context_limit)}</strong></li>
+              <li>Перебор: <strong>${formatNumber(o.over_by)}</strong> tokens</li>
+            </ul>`;
+          return;
+        }
+
+        if (turn.status === "provider_error") {
+          const e = turn.provider_error || data.provider_error || {};
+          breakagePanel.innerHTML = `
+            <p class="breakage-title">OpenRouter отклонил запрос</p>
+            <ul class="breakage-list">
+              <li>HTTP <strong>${e.http_status ?? "?"}</strong></li>
+              <li>Context-compression: <strong>disabled</strong></li>
+              <li>${e.message || data.error || "Provider error"}</li>
+            </ul>`;
+          return;
+        }
+
+        if (turn.status === "provider_unexpected_ok") {
+          breakagePanel.innerHTML = `
+            <p class="breakage-title warn">Overflow не случился</p>
+            <p class="breakage-text">${data.provider_warning || turn.provider_warning || "OpenRouter принял запрос."}</p>
+            <p class="breakage-text">Увеличьте OPENROUTER_MODEL_CONTEXT или выберите модель с меньшим окном.</p>`;
+          return;
+        }
+
+        const memoryLoss = turn.memory_loss || data.memory_loss;
+        if (memoryLoss) {
+          const titleClass = memoryLoss.recalled_correctly ? "ok" : "warn";
+          const title = memoryLoss.recalled_correctly
+            ? "Кодовое слово сохранилось"
+            : "Потеря раннего контекста";
+          breakagePanel.innerHTML = `
+            <p class="breakage-title ${titleClass}">${title}</p>
+            <ul class="breakage-list">
+              <li>Ожидалось: <strong>${memoryLoss.expected_codeword}</strong></li>
+              <li>Ответ модели: <strong>${memoryLoss.model_answer || "—"}</strong></li>
+              <li>Filler-пар в истории: <strong>${formatNumber(memoryLoss.prefill_pairs)}</strong></li>
+              <li>History перед вопросом: <strong>${formatNumber(memoryLoss.prefill_history_tokens)}</strong> tokens (est.)</li>
+              <li>Prompt полный (est.): <strong>${formatNumber(memoryLoss.recall_prompt_tokens_full_estimated)}</strong></li>
+              <li>Локальный budget prompt: <strong>${formatNumber(memoryLoss.local_prompt_budget)}</strong></li>
+              <li>Prompt в API (est. / actual): <strong>${formatNumber(memoryLoss.recall_prompt_tokens_estimated)} / ${formatNumber(memoryLoss.recall_prompt_tokens_actual)}</strong></li>
+              <li>Отброшено старых сообщений: <strong>${formatNumber(memoryLoss.messages_dropped_from_head)}</strong></li>
+              <li>BLUEFOX в payload: <strong>${memoryLoss.codeword_in_llm_payload ? "да" : "нет"}</strong></li>
+              <li>Context-compression: <strong>disabled</strong></li>
+              <li>Стратегия: <strong>${memoryLoss.truncation_strategy || "—"}</strong></li>
+              <li>Окно модели: <strong>${formatNumber(memoryLoss.model_context_limit)}</strong></li>
+            </ul>
+            <p class="breakage-text">${memoryLoss.summary}</p>`;
+          return;
+        }
+
+        if (turn.status === "ok") {
+          breakagePanel.innerHTML = `
+            <p class="breakage-title ok">Последний ход успешен</p>
+            <p class="breakage-text">Prompt ${formatNumber(turn.prompt_tokens_actual ?? turn.prompt_tokens_estimated)} tokens, ответ ${formatNumber(turn.response_tokens_actual ?? turn.response_tokens_estimated)} tokens.</p>`;
+          return;
+        }
+
+        breakagePanel.innerHTML = `<p class="breakage-text">Статус: ${turn.status}</p>`;
+      }
+
       function renderCurrentTurn(data) {
         const turn = data.current_turn || data.last_turn;
         if (!turn) {
@@ -196,15 +524,11 @@
 
         renderDefinitionList(currentTurnBox, [
           ["Статус", turn.status],
-          ["Request tokens (estimated)", formatNumber(turn.current_request_tokens)],
-          ["History tokens (estimated)", formatNumber(turn.history_tokens)],
-          ["Prompt (estimated)", formatNumber(turn.prompt_tokens_estimated)],
-          ["Prompt (actual)", formatNumber(turn.prompt_tokens_actual)],
-          ["Response (estimated)", formatNumber(turn.response_tokens_estimated)],
-          ["Response (actual)", formatNumber(turn.response_tokens_actual)],
-          ["Total (estimated)", formatNumber(turn.total_tokens_estimated)],
-          ["Total (actual)", formatNumber(turn.total_tokens_actual)],
+          ["Prompt (estimated / actual)", `${formatNumber(turn.prompt_tokens_estimated)} / ${formatNumber(turn.prompt_tokens_actual)}`],
+          ["Response (estimated / actual)", `${formatNumber(turn.response_tokens_estimated)} / ${formatNumber(turn.response_tokens_actual)}`],
+          ["Total (estimated / actual)", `${formatNumber(turn.total_tokens_estimated)} / ${formatNumber(turn.total_tokens_actual)}`],
           ["Turn cost", costText],
+          ["Model called", turn.model_called ? "yes" : "no"],
         ]);
       }
 
@@ -218,9 +542,9 @@
 
         renderDefinitionList(promptUsageBox, [
           ["Prompt (estimated)", formatNumber(usage.prompt_tokens_estimated)],
-          ["Response budget", formatNumber(usage.response_budget || data.response_budget)],
-          ["Projected total (estimated)", formatNumber(projected)],
-          ["Context limit", formatNumber(limit)],
+          ["+ response budget", formatNumber(usage.response_budget || data.response_budget)],
+          ["= projected total", formatNumber(projected)],
+          ["Local limit", formatNumber(limit)],
           ["Remaining", formatNumber(usage.remaining_tokens)],
         ]);
       }
@@ -236,14 +560,11 @@
           : "цены не заданы";
 
         renderDefinitionList(cumulativeBox, [
-          ["Prompt (estimated)", formatNumber(cumulative.prompt_tokens_estimated)],
-          ["Prompt (actual)", formatNumber(cumulative.prompt_tokens_actual)],
-          ["Response (estimated)", formatNumber(cumulative.response_tokens_estimated)],
-          ["Response (actual)", formatNumber(cumulative.response_tokens_actual)],
-          ["Total (estimated)", formatNumber(cumulative.total_tokens_estimated)],
-          ["Total (actual)", formatNumber(cumulative.total_tokens_actual)],
-          ["Cost (actual)", costActual],
-          ["Cost (estimated)", costEstimated],
+          ["Σ prompt (actual)", formatNumber(cumulative.prompt_tokens_actual)],
+          ["Σ response (actual)", formatNumber(cumulative.response_tokens_actual)],
+          ["Σ total (actual)", formatNumber(cumulative.total_tokens_actual)],
+          ["Σ cost (actual)", costActual],
+          ["Σ cost (estimated)", costEstimated],
         ]);
       }
 
@@ -252,24 +573,24 @@
         renderDefinitionList(configBox, [
           ["Model", data.model || "—"],
           ["Tokenizer", data.tokenizer || "—"],
-          ["Context limit", formatNumber(data.context_limit)],
-          ["Response budget", formatNumber(data.response_budget)],
-          ["Prompt $/1M", pricing.prompt_price_per_1m ?? "—"],
-          ["Completion $/1M", pricing.completion_price_per_1m ?? "—"],
+          ["Local preflight limit", formatNumber(data.context_limit)],
+          ["OpenRouter model context", formatNumber(data.openrouter_model_context)],
         ]);
       }
 
       function renderTurnTable(turns) {
         const rows = turns || [];
         if (rows.length === 0) {
-          turnTableBody.innerHTML = '<tr><td colspan="10" class="empty-table">Ходов пока нет.</td></tr>';
+          turnTableBody.innerHTML = '<tr><td colspan="7" class="empty-table">Ходов пока нет.</td></tr>';
           return;
         }
 
         turnTableBody.replaceChildren(...rows.map((turn) => {
           const row = document.createElement("tr");
-          if (turn.status === "overflow") {
+          if (turn.status === "overflow" || turn.status === "provider_error") {
             row.className = "row-overflow";
+          } else if (turn.memory_loss && !turn.memory_loss.recalled_correctly) {
+            row.className = "row-memory-loss";
           }
 
           const cost = turn.turn_cost_actual ?? turn.turn_cost_estimated;
@@ -279,11 +600,8 @@
             turn.status,
             turn.current_request_tokens,
             turn.history_tokens,
-            turn.prompt_tokens_estimated,
-            turn.prompt_tokens_actual ?? "—",
-            turn.response_tokens_estimated,
-            turn.response_tokens_actual ?? "—",
-            turn.total_tokens_estimated ?? "—",
+            turn.prompt_tokens_actual ?? turn.prompt_tokens_estimated,
+            turn.response_tokens_actual ?? turn.response_tokens_estimated,
             cost == null ? "—" : `${Number(cost).toFixed(6)} (${costLabel})`,
           ];
 
@@ -298,6 +616,9 @@
 
       function renderState(data) {
         renderMessages(data.messages || []);
+        renderTokenTriple(data);
+        renderGrowthChart(data.turns || []);
+        renderBreakagePanel(data);
         renderCurrentTurn(data);
         renderPromptUsage(data);
         renderCumulative(data);
@@ -312,9 +633,6 @@
         if (meta.duration_ms != null) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
         if (meta.total_tokens != null) items.push(`tokens (actual): ${meta.total_tokens}`);
         if (meta.cost != null) items.push(`cost (actual): $${Number(meta.cost).toFixed(6)}`);
-        if (meta.cost_details && typeof meta.cost_details === "object") {
-          items.push(`cost_details (actual): ${JSON.stringify(meta.cost_details)}`);
-        }
         metadataBox.textContent = items.length ? items.join(" · ") : "Метаданные недоступны.";
       }
 
@@ -330,6 +648,7 @@
           const { response, data } = await requestJson("/api/chat");
           if (!response.ok) throw new Error(data.error || "Load failed");
           renderState(data);
+          renderComparePanel(JSON.parse(sessionStorage.getItem(COMPARE_KEY) || "{}"));
           showAlert(data.error || "", data.overflow ? "error" : "");
           setStatus("Готово");
         } catch (error) {
@@ -350,6 +669,7 @@
         setStatus("Запрос...", "loading");
         metadataBox.textContent = "Preflight token check, затем OpenRouter...";
         showAlert("");
+        showLesson("");
 
         try {
           const { response, data } = await requestJson("/api/chat", {
@@ -363,6 +683,7 @@
             renderState(data);
             renderMetadata(data);
             showAlert(data.error || "Preflight overflow", "error");
+            showLesson("Ручное сообщение не прошло local preflight: prompt + budget превысили TOKEN_CONTEXT_LIMIT.");
             setStatus("Overflow", "error");
             return;
           }
@@ -383,14 +704,16 @@
 
       shortButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("Short demo...", "loading");
+        setStatus("Короткий диалог...", "loading");
         showAlert("");
+        showLesson("Короткий диалог: мало history, prompt и cost. Сравните с длинным следующим шагом.");
         try {
           const { response, data } = await requestJson("/api/demo/short", { method: "POST" });
           if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Short demo failed"}`);
           renderState(data);
           renderMetadata(data);
-          setStatus("Готово");
+          saveCompareSnapshot("short", data);
+          setStatus("Короткий готов");
         } catch (error) {
           setStatus("Ошибка", "error");
           metadataBox.textContent = error.message;
@@ -401,14 +724,16 @@
 
       longButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("Long demo...", "loading");
+        setStatus("Длинный диалог...", "loading");
         showAlert("");
+        showLesson("Длинный диалог: history и prompt растут на каждом ходе — смотрите график и таблицу.");
         try {
           const { response, data } = await requestJson("/api/demo/long", { method: "POST" });
           if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Long demo failed"}`);
           renderState(data);
           renderMetadata(data);
-          setStatus("Готово");
+          saveCompareSnapshot("long", data);
+          setStatus("Длинный готов");
         } catch (error) {
           setStatus("Ошибка", "error");
           metadataBox.textContent = error.message;
@@ -419,16 +744,85 @@
 
       overflowButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("Overflow demo...", "loading");
+        setStatus("Local overflow...", "loading");
         showAlert("");
+        showLesson("Local overflow: backend блокирует запрос до OpenRouter. Модель не вызывается, cost = 0.");
         try {
           const { response, data } = await requestJson("/api/demo/overflow", { method: "POST" });
           renderState(data);
           renderMetadata(data);
           showAlert(data.error || "Preflight overflow", "error");
-          setStatus("Overflow", "error");
+          setStatus("Local overflow", "error");
           if (!response.ok && !data.overflow) {
-            throw new Error(`${data.status || response.status}: ${data.error || "Overflow demo failed"}`);
+            throw new Error(`${data.status || response.status}: ${data.error || "Preflight overflow failed"}`);
+          }
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      providerOverflowButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("OpenRouter overflow...", "loading");
+        showLesson("OpenRouter overflow: реальный вызов с context-compression off. Ожидаем ошибку провайдера или предупреждение, если окно модели больше.");
+        showAlert("Запрос к OpenRouter с max_tokens ≈ context window модели…");
+        try {
+          const { response, data } = await requestJson("/api/demo/provider-overflow", { method: "POST" });
+          renderState(data);
+          renderMetadata(data);
+          if (data.provider_error) {
+            showAlert(data.error || "OpenRouter provider error", "error");
+            setStatus("Provider error", "error");
+            return;
+          }
+          if (data.provider_warning) {
+            showAlert(data.provider_warning, "warn");
+            setStatus("Unexpected OK", "loading");
+            return;
+          }
+          if (!response.ok) {
+            throw new Error(`${data.status || response.status}: ${data.error || "Provider overflow failed"}`);
+          }
+          setStatus("Готово");
+          showAlert("");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      memoryLossButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("Потеря памяти...", "loading");
+        showAlert("2 вызова OpenRouter: кодовое слово → длинная история → вопрос про начало…");
+        showLesson(
+          "Memory loss: длинная история → локально отбрасываем старые сообщения до окна 8K (compression off) → в API BLUEFOX часто уже нет."
+        );
+        try {
+          const { response, data } = await requestJson("/api/demo/memory-loss", { method: "POST" });
+          renderState(data);
+          renderMetadata(data);
+          const memoryLoss = data.memory_loss;
+          if (!response.ok && !memoryLoss) {
+            throw new Error(`${data.status || response.status}: ${data.error || "Memory loss demo failed"}`);
+          }
+          if (memoryLoss?.provider_error || data.provider_error) {
+            showAlert(memoryLoss?.summary || data.error || "Recall не прошёл", "error");
+            setStatus("Recall error", "error");
+          } else if (memoryLoss?.recalled_correctly) {
+            showAlert(memoryLoss.summary, "warn");
+            setStatus("Память сохранилась", "loading");
+          } else if (memoryLoss) {
+            showAlert(memoryLoss.summary, "error");
+            setStatus("Потеря памяти", "error");
+          } else {
+            setStatus("Готово");
+            showAlert("");
           }
         } catch (error) {
           setStatus("Ошибка", "error");
@@ -442,10 +836,13 @@
         setBusy(true);
         setStatus("Очистка...", "loading");
         showAlert("");
+        showLesson("");
         try {
           const { response, data } = await requestJson("/api/chat", { method: "DELETE" });
           if (!response.ok) throw new Error(data.error || "Clear failed");
+          sessionStorage.removeItem(COMPARE_KEY);
           renderState(data);
+          renderComparePanel({});
           metadataBox.textContent = "Диалог и token stats очищены.";
           setStatus("Готово");
         } catch (error) {

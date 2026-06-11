@@ -9,10 +9,11 @@ from http_log import log_exchange
 logger = logging.getLogger("llm_demo")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "z-ai/glm-4.7-flash"
+DEFAULT_MODEL = "meta-llama/llama-3-8b-instruct"
 TIMEOUT_SECONDS = 180.0
 REASONING_EXCLUDED = {"exclude": True}
 REASONING_ENABLED = {"enabled": True, "exclude": False}
+DISABLE_CONTEXT_COMPRESSION = [{"id": "context-compression", "enabled": False}]
 
 
 class OpenRouterError(Exception):
@@ -33,6 +34,7 @@ def chat_completion(
     provider=None,
     include_reasoning=False,
     reasoning=None,
+    plugins=None,
 ):
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
@@ -70,6 +72,9 @@ def chat_completion(
         body["reasoning"] = reasoning
     elif include_reasoning:
         body["reasoning"] = REASONING_ENABLED
+
+    if plugins is not None:
+        body["plugins"] = plugins
 
     headers = {
         "Authorization": f"Bearer {api_key}",

@@ -4,10 +4,30 @@ import unittest
 from unittest.mock import patch
 
 try:
-    from .agent import ChatAgent, FileMemoryStore
+    from .agent import (
+        ChatAgent,
+        FileMemoryStore,
+        MEMORY_LOSS_CODEWORD,
+        MEMORY_LOSS_RECALL_PROMPT,
+        MEMORY_LOSS_SECRET_PROMPT,
+        build_llm_messages,
+        build_memory_loss_prefill,
+        evaluate_codeword_recall,
+    )
+    from .llm_client import OpenRouterError
     from .token_counter import count_message_tokens, count_text_tokens
 except ImportError:
-    from agent import ChatAgent, FileMemoryStore
+    from agent import (
+        ChatAgent,
+        FileMemoryStore,
+        MEMORY_LOSS_CODEWORD,
+        MEMORY_LOSS_RECALL_PROMPT,
+        MEMORY_LOSS_SECRET_PROMPT,
+        build_llm_messages,
+        build_memory_loss_prefill,
+        evaluate_codeword_recall,
+    )
+    from llm_client import OpenRouterError
     from token_counter import count_message_tokens, count_text_tokens
 
 
@@ -15,9 +35,10 @@ CLIENT_ID = "22222222-2222-2222-2222-222222222222"
 
 
 class FakeLLM:
-    def __init__(self, reply="Короткий ответ.", usage=None):
+    def __init__(self, reply="Короткий ответ.", usage=None, error=None):
         self.calls = []
         self.reply = reply
+        self.error = error
         self.usage = usage or {
             "prompt_tokens": 42,
             "completion_tokens": 7,
@@ -27,8 +48,30 @@ class FakeLLM:
 
     def __call__(self, messages, **options):
         self.calls.append({"messages": messages, "options": options})
+        if self.error:
+            raise self.error
         return {
             "content": self.reply,
+            **self.usage,
+        }
+
+
+class FakeLLMSequence:
+    def __init__(self, replies, usage=None):
+        self.calls = []
+        self.replies = list(replies)
+        self.usage = usage or {
+            "prompt_tokens": 42,
+            "completion_tokens": 7,
+            "total_tokens": 49,
+            "cost": 0.000012,
+        }
+
+    def __call__(self, messages, **options):
+        self.calls.append({"messages": messages, "options": options})
+        index = min(len(self.calls) - 1, len(self.replies) - 1)
+        return {
+            "content": self.replies[index],
             **self.usage,
         }
 
@@ -165,6 +208,80 @@ class TokenAccountingTest(unittest.TestCase):
             self.assertFalse(result["last_turn"]["model_called"])
             self.assertIn("over_by", result["overflow"])
 
+    def test_provider_overflow_records_openrouter_error(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM(error=OpenRouterError("maximum context length exceeded", 400))
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            result = agent.run_demo_provider_overflow(CLIENT_ID)
+
+            self.assertEqual(len(llm.calls), 1)
+            self.assertEqual(result["last_turn"]["status"], "provider_error")
+            self.assertTrue(result["last_turn"]["context_compression_disabled"])
+            self.assertEqual(result["last_turn"]["overflow_strategy"], "max_tokens")
+            self.assertEqual(
+                llm.calls[0]["options"]["plugins"],
+                [{"id": "context-compression", "enabled": False}],
+            )
+            self.assertEqual(
+                llm.calls[0]["options"]["max_tokens"],
+                8192,
+            )
+            self.assertIn("provider_error", result)
+
+    def test_memory_loss_prefill_overshoots_model_window(self):
+        initial = [
+            {"role": "user", "content": MEMORY_LOSS_SECRET_PROMPT},
+            {"role": "assistant", "content": "OK"},
+        ]
+        model = "meta-llama/llama-3-8b-instruct"
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_MODEL_CONTEXT": "8192", "MEMORY_LOSS_OVERSHOOT": "2.0"},
+            clear=False,
+        ):
+            pairs, history_tokens = build_memory_loss_prefill(initial, model)
+            messages = list(initial)
+            for user_text, assistant_text in pairs:
+                messages.append({"role": "user", "content": user_text})
+                messages.append({"role": "assistant", "content": assistant_text})
+            prompt_estimated = count_message_tokens(
+                build_llm_messages(messages, MEMORY_LOSS_RECALL_PROMPT),
+                model,
+            )
+
+        self.assertGreater(len(pairs), 20)
+        self.assertGreater(history_tokens, 2000)
+        self.assertGreaterEqual(prompt_estimated, 8192 * 2 - 256)
+
+    def test_evaluate_codeword_recall(self):
+        self.assertTrue(evaluate_codeword_recall("BLUEFOX", MEMORY_LOSS_CODEWORD))
+        self.assertFalse(evaluate_codeword_recall("REDFISH", MEMORY_LOSS_CODEWORD))
+
+    def test_memory_loss_demo_truncates_codeword_from_payload(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLMSequence(["OK", "REDFISH"])
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            with patch.dict(
+                os.environ,
+                {"OPENROUTER_MODEL_CONTEXT": "8192", "TOKEN_CONTEXT_LIMIT": "4096"},
+                clear=False,
+            ):
+                result = agent.run_demo_memory_loss(CLIENT_ID)
+
+            self.assertEqual(len(llm.calls), 2)
+            self.assertTrue(result["last_turn"]["context_compression_disabled"])
+            self.assertFalse(result["memory_loss"]["codeword_in_llm_payload"])
+            self.assertGreater(result["memory_loss"]["messages_dropped_from_head"], 0)
+            self.assertGreater(result["memory_loss"]["recall_prompt_tokens_full_estimated"], 8192)
+            self.assertLessEqual(result["memory_loss"]["recall_prompt_tokens_estimated"], 2100)
+            self.assertFalse(result["memory_loss"]["recalled_correctly"])
+            recall_payload = str(llm.calls[1]["messages"])
+            self.assertNotIn(MEMORY_LOSS_CODEWORD, recall_payload)
+            self.assertEqual(
+                llm.calls[1]["options"]["plugins"],
+                [{"id": "context-compression", "enabled": False}],
+            )
+
     def test_snapshot_exposes_token_data_for_ui(self):
         with tempfile.TemporaryDirectory() as data_dir:
             llm = FakeLLM()
@@ -244,6 +361,42 @@ class ApiTokenAccountingTest(unittest.TestCase):
         self.assertEqual(data["messages"], [])
         self.assertEqual(data["turns"], [])
         self.assertEqual(data["cumulative"]["total_tokens_estimated"], 0)
+
+    def test_post_provider_overflow_returns_provider_error_payload(self):
+        failing_llm = FakeLLM(error=OpenRouterError("maximum context length exceeded", 400))
+        self.agent = ChatAgent(FileMemoryStore(self.data_dir), failing_llm)
+        self.agent_patch.stop()
+        self.agent_patch = patch("server.agent", self.agent)
+        self.agent_patch.start()
+
+        with patch.dict(os.environ, {"OPENROUTER_MODEL_CONTEXT": "8192"}, clear=False):
+            response = self.client.post("/api/demo/provider-overflow")
+
+        self.assertEqual(response.status_code, 400)
+        data = response.get_json()
+        self.assertEqual(data["last_turn"]["status"], "provider_error")
+        self.assertIn("provider_error", data)
+        self.assertEqual(len(failing_llm.calls), 1)
+
+    def test_post_memory_loss_returns_memory_loss_payload(self):
+        sequence_llm = FakeLLMSequence(["OK", "REDFISH"])
+        self.agent = ChatAgent(FileMemoryStore(self.data_dir), sequence_llm)
+        self.agent_patch.stop()
+        self.agent_patch = patch("server.agent", self.agent)
+        self.agent_patch.start()
+
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_MODEL_CONTEXT": "8192", "TOKEN_CONTEXT_LIMIT": "4096"},
+            clear=False,
+        ):
+            response = self.client.post("/api/demo/memory-loss")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertIn("memory_loss", data)
+        self.assertFalse(data["memory_loss"]["recalled_correctly"])
+        self.assertEqual(len(sequence_llm.calls), 2)
 
 
 if __name__ == "__main__":
