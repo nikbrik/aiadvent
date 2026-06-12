@@ -128,12 +128,45 @@ def pinned_facts_block(pinned_facts):
     return f"{PINNED_FACTS_HEADER}\n{lines}"
 
 
-def strip_pinned_facts_block(text):
+def normalize_pinned_fact_line(line):
+    line = str(line or "").strip()
+    if line.startswith("- "):
+        line = line[2:].strip()
+    return re.sub(r"\s+", " ", line).casefold()
+
+
+def strip_pinned_facts_block(text, pinned_facts=None):
     text = str(text or "")
-    marker_index = text.find(PINNED_FACTS_HEADER)
-    if marker_index == -1:
-        return text.strip()
-    return text[:marker_index].strip()
+    pinned = {
+        normalize_pinned_fact_line(item)
+        for item in (pinned_facts or [])
+        if str(item).strip()
+    }
+    lines = text.splitlines()
+    kept = []
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() != PINNED_FACTS_HEADER:
+            kept.append(lines[index])
+            index += 1
+            continue
+
+        index += 1
+        while index < len(lines):
+            stripped = lines[index].strip()
+            if not stripped:
+                index += 1
+                continue
+            normalized = normalize_pinned_fact_line(stripped)
+            if pinned and normalized in pinned:
+                index += 1
+                continue
+            if not pinned and stripped.startswith("- "):
+                index += 1
+                continue
+            break
+
+    return "\n".join(kept).strip()
 
 
 def apply_pinned_facts(summary, pinned_facts, max_chars=None):
@@ -141,7 +174,7 @@ def apply_pinned_facts(summary, pinned_facts, max_chars=None):
     block = pinned_facts_block(pinned_facts)
     if not block:
         return cap_summary(summary, max_chars)
-    body = strip_pinned_facts_block(summary)
+    body = strip_pinned_facts_block(summary, pinned_facts)
     if body:
         merged = f"{block}\n\n{body}"
     else:

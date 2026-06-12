@@ -167,6 +167,10 @@ h3 {
   background: #f3fbf8;
 }
 
+.message-pending {
+  opacity: 0.68;
+}
+
 .composer {
   display: grid;
   gap: 12px;
@@ -207,7 +211,7 @@ textarea:focus {
 
 .actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 

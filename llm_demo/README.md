@@ -6,8 +6,8 @@
 
 ## Что внутри
 
-- `server.py` — Flask routes `/`, `/api/chat`, `/api/demo/compression-compare`.
-- `agent.py` — `ChatAgent` с batch compression, per-turn token stats, compare demo.
+- `server.py` — Flask routes `/`, `/api/chat`, `/api/demo/compression-step`, `/api/demo/current-comparison`, `/api/demo/compression-compare`.
+- `agent.py` — `ChatAgent` с batch compression, per-turn token stats, visible demo steps, compare demo.
 - `context_compression.py` — merge-summary, выбор messages для prompt.
 - `quality_judge.py` — LLM-judge для compare demo.
 - `token_counter.py` — локальная оценка токенов без сети.
@@ -25,7 +25,7 @@
 2. в prompt попадают summary block в system + последние **6** сообщений + новый user message;
 3. UI показывает tokens full vs sent, net savings, payload preview.
 
-Кнопка **Сравнить сжатие** запускает ephemeral A/B (не трогает текущую сессию): один и тот же скрипт без сжатия и со сжатием, LLM-judge оценивает recall фактов.
+Кнопка **Продолжить демо** добавляет 56 scripted turns в текущий чат по шагам, без очистки истории: стартовые факты, 54 разные учебные реплики и recall. Кнопка **A/B текущий чат** сравнивает recall по накопленной истории: без сжатия отправляется вся история, со сжатием — `history_summary` + хвост сообщений. Ephemeral `/api/demo/compression-compare` оставлен как no-session A/B endpoint.
 
 По умолчанию модель **`deepseek/deepseek-v4-flash`**.
 
@@ -55,6 +55,7 @@ python -m py_compile llm_demo/server.py llm_demo/llm_client.py llm_demo/agent.py
 - `CONTEXT_COMPRESS_EVERY` — default `10`.
 - `CONTEXT_COMPRESSION_ENABLED` — default `true`.
 - `MAX_SUMMARY_CHARS` — default `900`.
+- `MAX_STORED_MESSAGES`, `MAX_STORED_TURNS` — default `2000`.
 - `PROMPT_PRICE_PER_1M_TOKENS`, `COMPLETION_PRICE_PER_1M_TOKENS` — optional cost estimate.
 
 Compare demo и длинный ручной чат расходуют баланс OpenRouter — запускайте только с разрешения.

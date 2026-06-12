@@ -40,5 +40,5 @@ git diff --check
 - LLM merge **replaces** `history_summary`; concat only on summarization fallback.
 - `safe_judge_answer` returns a failure object instead of raising.
 - `resume_chat` restores full transcript without injecting archive summary into the prompt path.
-- `MAX_STORED_MESSAGES` / `MAX_STORED_TURNS` cap JSON growth (default 200).
+- `MAX_STORED_MESSAGES` / `MAX_STORED_TURNS` cap JSON growth (default 2000, so repeated visible demo runs can accumulate many compression batches).
 - `total_tokens_estimated` includes summarization overhead per turn.

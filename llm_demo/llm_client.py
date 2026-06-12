@@ -4,7 +4,10 @@ import time
 
 import httpx
 
-from http_log import log_exchange
+try:
+    from http_log import log_exchange
+except ImportError:
+    from .http_log import log_exchange
 
 logger = logging.getLogger("llm_demo")
 

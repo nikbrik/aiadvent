@@ -13,6 +13,7 @@ try:
     )
     from .context_compression import (
         PINNED_FACTS_HEADER,
+        SUMMARY_MARKER,
         apply_pinned_facts,
         cap_summary,
         maybe_compress_history,
@@ -23,7 +24,7 @@ try:
         parse_judge_result,
         safe_judge_answer,
     )
-    from .server import app
+    from . import server as server_module
     from .token_counter import count_message_tokens
 except ImportError:
     from agent import (
@@ -34,6 +35,7 @@ except ImportError:
     )
     from context_compression import (
         PINNED_FACTS_HEADER,
+        SUMMARY_MARKER,
         apply_pinned_facts,
         cap_summary,
         maybe_compress_history,
@@ -44,7 +46,7 @@ except ImportError:
         parse_judge_result,
         safe_judge_answer,
     )
-    from server import app
+    import server as server_module
     from token_counter import count_message_tokens
 
 
@@ -150,6 +152,25 @@ class ContextCompressionLogicTest(unittest.TestCase):
         self.assertIn("BLUEFOX", summary)
         self.assertIn("Older dialog summary.", summary)
 
+    def test_pinned_facts_do_not_drop_existing_summary_body(self):
+        summary = apply_pinned_facts(
+            (
+                "Pinned facts (never omit):\n"
+                "- codeword: BLUEFOX\n"
+                "- favorite language: Kotlin\n"
+                "- project: Orbit\n\n"
+                "Python notes covered decorators, asyncio, dataclass, and pytest."
+            ),
+            [
+                "codeword: BLUEFOX",
+                "favorite language: Kotlin",
+                "project: Orbit",
+            ],
+        )
+        self.assertIn(PINNED_FACTS_HEADER, summary)
+        self.assertIn("BLUEFOX", summary)
+        self.assertIn("Python notes covered decorators", summary)
+
     def test_maybe_compress_history_keeps_pinned_facts(self):
         memory = {
             "current_chat": {
@@ -170,6 +191,51 @@ class ContextCompressionLogicTest(unittest.TestCase):
         maybe_compress_history(memory, llm, "test-model", {"model": "test-model"})
         self.assertIn(PINNED_FACTS_HEADER, memory["history_summary"])
         self.assertIn("BLUEFOX", memory["history_summary"])
+
+
+    def test_maybe_compress_history_fallback_updates_summary(self):
+        class FailingMergeLLM:
+            def __call__(self, messages, **options):
+                system = messages[0]["content"] if messages else ""
+                if "compress chat history" in system:
+                    return {"content": ""}
+                return {"content": "ok"}
+
+        memory = {
+            "current_chat": {
+                "messages": [
+                    {"role": "user" if index % 2 == 0 else "assistant", "content": f"turn-{index}"}
+                    for index in range(16)
+                ],
+            },
+            "history_summary": "",
+            "compression": {"enabled": True, "summarized_through": 0, "updates": []},
+        }
+        llm = FailingMergeLLM()
+        events = maybe_compress_history(memory, llm, "test-model", {"model": "test-model"})
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0]["used_fallback"])
+        self.assertTrue(memory["history_summary"])
+        self.assertEqual(memory["compression"]["summarized_through"], 10)
+
+    def test_compression_disabled_sends_full_history_without_summary_marker(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = RoutingFakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            last_result = None
+            for index in range(8):
+                last_result = agent.respond(CLIENT_ID, f"msg-{index}", compression=False)
+
+            system_prompt = llm.calls[-1]["messages"][0]["content"]
+            self.assertNotIn(SUMMARY_MARKER, system_prompt)
+            turn = last_result["last_turn"]
+            self.assertEqual(turn["history_tokens_sent"], turn["history_tokens_full"])
+            history_roles = [
+                item
+                for item in llm.calls[-1]["messages"]
+                if item.get("role") in ("user", "assistant")
+            ]
+            self.assertEqual(len(history_roles), 15)
 
 
 class JudgeSafetyTest(unittest.TestCase):
@@ -260,10 +326,14 @@ class ContextCompressionAgentTest(unittest.TestCase):
             with_track = comparison["with_compression"]
             without = comparison["without_compression"]
             self.assertEqual(with_track["replay"], "canned")
-            self.assertGreaterEqual(with_track["script_turns"], 16)
+            self.assertGreaterEqual(with_track["script_turns"], 56)
             self.assertGreater(with_track["merge_count"], 0)
             self.assertIn("facts", with_track["judge"])
             self.assertIn("recall_payload", with_track)
+            self.assertIn("payload_preview", with_track)
+            self.assertIn("payload_preview", without)
+            self.assertNotIn(SUMMARY_MARKER, without["payload_preview"][0]["content"])
+            self.assertIn(SUMMARY_MARKER, with_track["payload_preview"][0]["content"])
             self.assertGreater(with_track["tokens"]["cumulative_net_saved"], 0)
             self.assertEqual(
                 without["tokens"]["cumulative_prompt_estimated"],
@@ -326,10 +396,11 @@ class CompressionApiTest(unittest.TestCase):
         self.store = FileMemoryStore(self.data_dir.name)
         self.llm = RoutingFakeLLM()
         self.agent = ChatAgent(self.store, self.llm)
-        self.client = app.test_client()
-        app.config["TESTING"] = True
+        self.client = server_module.app.test_client()
+        self.client.set_cookie("client_id", CLIENT_ID)
+        server_module.app.config["TESTING"] = True
 
-        patcher = patch("server.agent", self.agent)
+        patcher = patch.object(server_module, "agent", self.agent)
         self.addCleanup(patcher.stop)
         patcher.start()
 
@@ -348,6 +419,8 @@ class CompressionApiTest(unittest.TestCase):
         self.assertIn("history_summary", data)
         self.assertIn("compression", data)
         self.assertIn("turns", data)
+        self.assertIn("payload_preview", data)
+        self.assertGreater(len(data["payload_preview"]), 0)
 
     def test_compression_compare_endpoint(self):
         response = self.client.post(
@@ -363,6 +436,90 @@ class CompressionApiTest(unittest.TestCase):
         self.assertIn("token_breakdown", comparison)
         self.assertIn("visual", comparison)
         self.assertIn("verdict", comparison)
+
+    def test_visible_demo_steps_update_current_chat(self):
+        seeded = self.agent.respond(CLIENT_ID, "Перед демо уже есть история.", compression=True)
+        base_count = len(seeded["messages"])
+
+        script_response = self.client.get("/api/demo/compression-script")
+        self.assertEqual(script_response.status_code, 200)
+        script = script_response.get_json()
+        self.assertGreaterEqual(script["total_steps"], 56)
+        self.assertEqual(script["steps"][0]["index"], 0)
+        user_messages = [step["message"] for step in script["steps"]]
+        self.assertGreaterEqual(len(set(user_messages)), 56)
+
+        last = None
+        for step in script["steps"]:
+            response = self.client.post(
+                "/api/demo/compression-step",
+                json={"step_index": step["index"]},
+            )
+            self.assertEqual(response.status_code, 200)
+            last = response.get_json()
+            self.assertEqual(len(last["messages"]), base_count + ((step["index"] + 1) * 2))
+            self.assertEqual(last["demo_step"]["index"], step["index"])
+            self.assertIn("payload_preview", last)
+
+        self.assertIsNotNone(last)
+        self.assertGreater(last["compression"]["summarized_through"], 0)
+        self.assertGreater(len(last["compression"]["updates"]), 0)
+        self.assertIn("judge", last)
+        self.assertTrue(last["judge"]["passed"])
+
+        repeat_response = self.client.post(
+            "/api/demo/compression-step",
+            json={"step_index": 0},
+        )
+        self.assertEqual(repeat_response.status_code, 200)
+        repeated = repeat_response.get_json()
+        self.assertEqual(len(repeated["messages"]), base_count + (script["total_steps"] * 2) + 2)
+
+    def test_current_comparison_uses_existing_history_without_mutating_chat(self):
+        script_response = self.client.get("/api/demo/compression-script")
+        self.assertEqual(script_response.status_code, 200)
+        script = script_response.get_json()
+
+        for step in script["steps"][:-1]:
+            response = self.client.post(
+                "/api/demo/compression-step",
+                json={"step_index": step["index"]},
+            )
+            self.assertEqual(response.status_code, 200)
+
+        before = self.client.get("/api/chat").get_json()
+        before_count = len(before["messages"])
+        self.assertGreater(before["compression"]["summarized_through"], 0)
+
+        response = self.client.post("/api/demo/current-comparison")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        comparison = data["comparison"]
+        state = data["state"]
+        without = comparison["without_compression"]
+        with_track = comparison["with_compression"]
+
+        self.assertEqual(comparison["source"], "current_history")
+        self.assertIn("A/B берёт уже накопленную историю", comparison["visual"]["story"][0])
+        self.assertIn("A/B recall + merge overhead", [
+            row["label"] for row in comparison["visual"]["table"]
+        ])
+        self.assertIn("Чат не очищался", comparison["verdict"])
+        self.assertEqual(len(state["messages"]), before_count)
+        self.assertEqual(without["replay"], "current_history")
+        self.assertEqual(with_track["replay"], "current_history")
+        self.assertIn("payload_preview", without)
+        self.assertIn("payload_preview", with_track)
+        self.assertNotIn(SUMMARY_MARKER, without["payload_preview"][0]["content"])
+        self.assertIn(SUMMARY_MARKER, with_track["payload_preview"][0]["content"])
+        self.assertGreater(
+            without["tokens"]["final_prompt_estimated"],
+            with_track["tokens"]["final_prompt_estimated"],
+        )
+        self.assertLess(
+            with_track["recall_payload"]["messages_sent"],
+            without["recall_payload"]["messages_sent"],
+        )
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ try:
         reset_compression,
         select_history_messages,
     )
-    from quality_judge import quality_delta, safe_judge_recall_answer
+    from quality_judge import evaluate_fact_recall, quality_delta, safe_judge_recall_answer
     from token_counter import count_message_tokens, count_text_tokens, tokenizer_name
 except ImportError:
     from .compare_demo import (
@@ -53,7 +53,7 @@ except ImportError:
         reset_compression,
         select_history_messages,
     )
-    from .quality_judge import quality_delta, safe_judge_recall_answer
+    from .quality_judge import evaluate_fact_recall, quality_delta, safe_judge_recall_answer
     from .token_counter import count_message_tokens, count_text_tokens, tokenizer_name
 
 
@@ -62,8 +62,8 @@ DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
 REASONING_EXCLUDED = {"exclude": True}
 MAX_ARCHIVED_SUMMARIES = 8
 MAX_SUMMARY_CHARS = 900
-DEFAULT_MAX_STORED_MESSAGES = 200
-DEFAULT_MAX_STORED_TURNS = 200
+DEFAULT_MAX_STORED_MESSAGES = 2000
+DEFAULT_MAX_STORED_TURNS = 2000
 
 
 def utc_now():
@@ -106,6 +106,7 @@ def default_memory():
             "messages": [],
         },
         "history_summary": "",
+        "last_payload_preview": [],
         "compression": default_compression(),
         "archived_chats": [],
         "turns": [],
@@ -246,6 +247,225 @@ class ChatAgent:
         comparison_body["verdict"] = build_compare_verdict(comparison_body)
         return {"comparison": comparison_body}
 
+    def demo_compression_script(self):
+        steps = compare_script_steps()
+        return {
+            "total_steps": len(steps),
+            "compression": True,
+            "steps": [
+                {
+                    "index": index,
+                    "message": step["user"],
+                    "uses_canned_reply": step.get("assistant") is not None,
+                    "is_recall": index == len(steps) - 1,
+                }
+                for index, step in enumerate(steps)
+            ],
+        }
+
+    def run_demo_compression_step(self, client_id, step_index):
+        steps = compare_script_steps()
+        try:
+            index = int(step_index)
+        except (TypeError, ValueError):
+            raise ValueError("step_index is required")
+        if index < 0 or index >= len(steps):
+            raise ValueError("step_index is out of range")
+
+        memory = self.memory_store.load(client_id)
+        ensure_compression_fields(memory)
+        memory["compression"]["enabled"] = True
+        memory["compression"]["pinned_facts"] = list(COMPARE_PINNED_FACTS)
+
+        step = steps[index]
+        result = self._complete_turn(
+            client_id,
+            memory,
+            step["user"],
+            run_judge=index == len(steps) - 1,
+            forced_reply=step.get("assistant"),
+        )
+        result["demo_step"] = {
+            "index": index,
+            "total_steps": len(steps),
+            "is_recall": index == len(steps) - 1,
+            "uses_canned_reply": step.get("assistant") is not None,
+        }
+        return result
+
+    def run_current_history_compression_compare(self, client_id):
+        memory = self.memory_store.load(client_id)
+        ensure_compression_fields(memory)
+        memory["compression"]["enabled"] = True
+        pinned = list(memory["compression"].get("pinned_facts") or [])
+        for fact in COMPARE_PINNED_FACTS:
+            if fact not in pinned:
+                pinned.append(fact)
+        memory["compression"]["pinned_facts"] = pinned
+
+        model = model_value()
+        user_message = COMPARE_RECALL_PROMPT
+        full_history = clean_messages(memory["current_chat"]["messages"], limit=None)
+
+        summarization_events = maybe_compress_history(
+            memory,
+            self.llm,
+            model,
+            agent_options(),
+        )
+        summarization_tokens_estimated = sum(
+            int(event.get("summarization_tokens_estimated") or 0)
+            for event in summarization_events
+        )
+
+        base_system_prompt = build_system_prompt(memory, include_history_summary=False)
+        without_messages = [
+            {"role": "system", "content": base_system_prompt},
+            *full_history,
+            {"role": "user", "content": user_message},
+        ]
+        without_preview = build_payload_preview(
+            base_system_prompt,
+            full_history,
+            user_message,
+            None,
+            False,
+        )
+        without_completion = self.llm(messages=without_messages, **agent_options())
+        without_answer = str(without_completion.get("content") or "").strip()
+        if not without_answer:
+            without_answer = "OpenRouter/model не вернул видимый текст."
+
+        history_messages, history_meta = select_history_messages(memory, True)
+        with_system_prompt = build_system_prompt(memory, include_history_summary=True)
+        with_messages = [
+            {"role": "system", "content": with_system_prompt},
+            *history_messages,
+            {"role": "user", "content": user_message},
+        ]
+        with_preview = build_payload_preview(
+            base_system_prompt,
+            history_messages,
+            user_message,
+            memory.get("history_summary"),
+            True,
+        )
+        with_completion = self.llm(messages=with_messages, **agent_options())
+        with_answer = str(with_completion.get("content") or "").strip()
+        if not with_answer:
+            with_answer = "OpenRouter/model не вернул видимый текст."
+
+        without_prompt_estimated = count_message_tokens(without_messages, model)
+        with_prompt_estimated = count_message_tokens(with_messages, model)
+        without_response_estimated = count_text_tokens(without_answer, model)
+        with_response_estimated = count_text_tokens(with_answer, model)
+        without_judge = evaluate_fact_recall(without_answer, COMPARE_GROUND_TRUTH)
+        with_judge = evaluate_fact_recall(with_answer, COMPARE_GROUND_TRUTH)
+        merge_count = len(memory.get("compression", {}).get("updates") or [])
+        script_turns = max(1, len(full_history) // 2)
+
+        without_track = {
+            "compression": False,
+            "answer": without_answer,
+            "judge": without_judge,
+            "summary": "",
+            "tokens": {
+                "cumulative_prompt_estimated": without_prompt_estimated,
+                "cumulative_prompt_full_estimated": without_prompt_estimated,
+                "cumulative_summarization_estimated": 0,
+                "cumulative_total_estimated": without_prompt_estimated + without_response_estimated,
+                "cumulative_net_saved": 0,
+                "final_prompt_estimated": without_prompt_estimated,
+                "final_prompt_full_estimated": without_prompt_estimated,
+            },
+            "merge_count": merge_count,
+            "script_turns": script_turns,
+            "replay": "current_history",
+            "payload_preview": without_preview,
+            "recall_payload": {
+                "messages_total": len(full_history),
+                "messages_sent": len(full_history),
+                "summary_chars": 0,
+            },
+            "metadata": completion_metadata(without_completion),
+        }
+        with_track = {
+            "compression": True,
+            "answer": with_answer,
+            "judge": with_judge,
+            "summary": memory.get("history_summary", ""),
+            "tokens": {
+                "cumulative_prompt_estimated": with_prompt_estimated,
+                "cumulative_prompt_full_estimated": without_prompt_estimated,
+                "cumulative_summarization_estimated": summarization_tokens_estimated,
+                "cumulative_total_estimated": (
+                    with_prompt_estimated
+                    + with_response_estimated
+                    + summarization_tokens_estimated
+                ),
+                "cumulative_net_saved": (
+                    without_prompt_estimated
+                    - with_prompt_estimated
+                    - summarization_tokens_estimated
+                ),
+                "final_prompt_estimated": with_prompt_estimated,
+                "final_prompt_full_estimated": without_prompt_estimated,
+            },
+            "merge_count": merge_count,
+            "merge_count_this_compare": len(summarization_events),
+            "script_turns": script_turns,
+            "replay": "current_history",
+            "payload_preview": with_preview,
+            "recall_payload": {
+                "messages_total": history_meta.get("messages_total", 0),
+                "messages_sent": history_meta.get("messages_sent", 0),
+                "summary_chars": len(memory.get("history_summary") or ""),
+            },
+            "metadata": completion_metadata(with_completion),
+        }
+
+        token_breakdown = build_token_breakdown(with_track, without_track)
+        comparison_body = {
+            "without_compression": without_track,
+            "with_compression": with_track,
+            "tokens_saved": token_breakdown["net_saved"],
+            "token_breakdown": token_breakdown,
+            "quality_delta": quality_delta(
+                without_judge.get("score", 0.0),
+                with_judge.get("score", 0.0),
+            ),
+            "source": "current_history",
+        }
+        visual = build_visual_comparison(comparison_body)
+        visual["story"] = [
+            "A/B берёт уже накопленную историю текущего чата.",
+            "Без сжатия: system + вся история + recall-запрос.",
+            "Со сжатием: system + history_summary + хвост сообщений + recall-запрос.",
+        ]
+        for row in visual.get("table", []):
+            if row.get("label") == "Весь сценарий (сумма prompt)":
+                row["label"] = "A/B recall + merge overhead"
+        comparison_body["visual"] = visual
+
+        facts = with_judge.get("facts") or without_judge.get("facts") or []
+        fact_total = len(facts) or 3
+        fact_ok = sum(1 for item in facts if item.get("found"))
+        comparison_body["verdict"] = (
+            f"A/B по текущей истории: recall prompt "
+            f"{without_prompt_estimated} → {with_prompt_estimated} tok. "
+            f"Факты: {fact_ok}/{fact_total}. "
+            f"Merge overhead этого сравнения: {summarization_tokens_estimated} tok. "
+            "Чат не очищался, recall-вопрос в историю не добавлялся."
+        )
+
+        memory["last_payload_preview"] = deepcopy(with_preview)
+        memory["current_chat"]["summary"] = str(memory.get("history_summary") or "")
+        self.memory_store.save(client_id, memory)
+        return {
+            "comparison": comparison_body,
+            "state": public_memory(memory),
+        }
+
     def _run_compare_track(self, client_id, steps, compression):
         self.memory_store.clear(client_id)
         memory = self.memory_store.load(client_id)
@@ -279,6 +499,7 @@ class ChatAgent:
             "merge_count": merge_count,
             "script_turns": len(steps),
             "replay": "canned",
+            "payload_preview": last_result.get("payload_preview") or [],
             "recall_payload": {
                 "messages_total": history_meta.get("messages_total", 0),
                 "messages_sent": history_meta.get("messages_sent", 0),
@@ -308,6 +529,13 @@ class ChatAgent:
             *history_messages,
             {"role": "user", "content": user_message},
         ]
+        payload_preview = build_payload_preview(
+            build_system_prompt(memory, include_history_summary=False),
+            history_messages,
+            user_message,
+            memory.get("history_summary"),
+            enabled,
+        )
 
         full_llm_messages = build_full_llm_messages(memory, user_message)
         current_request_tokens = count_text_tokens(user_message, model)
@@ -396,20 +624,13 @@ class ChatAgent:
 
         memory["current_chat"]["messages"].append({"role": "user", "content": user_message})
         memory["current_chat"]["messages"].append({"role": "assistant", "content": reply})
+        memory["last_payload_preview"] = deepcopy(payload_preview)
         trim_stored_messages(memory)
         memory["current_chat"]["summary"] = str(memory.get("history_summary") or "")
         memory.setdefault("turns", []).append(turn)
         trim_stored_turns(memory)
         apply_turn_to_cumulative(memory.setdefault("cumulative", empty_cumulative()), turn)
         self.memory_store.save(client_id, memory)
-
-        payload_preview = build_payload_preview(
-            build_system_prompt(memory, include_history_summary=False),
-            history_messages,
-            user_message,
-            memory.get("history_summary"),
-            enabled,
-        )
 
         result = public_memory(memory)
         result.update({
@@ -434,7 +655,12 @@ def normalize_memory(data):
             memory[key] = data[key]
 
     memory["history_summary"] = str(data.get("history_summary") or "")
+    memory["last_payload_preview"] = clean_payload_preview(data.get("last_payload_preview"))
     memory["turns"] = data.get("turns") if isinstance(data.get("turns"), list) else []
+    if not memory["last_payload_preview"] and memory["turns"]:
+        last_turn = memory["turns"][-1]
+        if isinstance(last_turn, dict):
+            memory["last_payload_preview"] = clean_payload_preview(last_turn.get("payload_preview"))
     memory["cumulative"] = normalize_cumulative(data.get("cumulative"))
 
     compression = data.get("compression")
@@ -501,6 +727,7 @@ def public_memory(memory):
         "turns": deepcopy(memory.get("turns", [])),
         "cumulative": deepcopy(memory.get("cumulative", empty_cumulative())),
         "current_turn": deepcopy(last_turn) if last_turn else None,
+        "payload_preview": deepcopy(memory.get("last_payload_preview", [])),
         "model": model_value(),
         "tokenizer": tokenizer_name(),
         "compression_config": config,
@@ -693,6 +920,20 @@ def clean_messages(value, limit=None):
     if limit is None:
         return messages
     return messages[-limit:]
+
+
+def clean_payload_preview(value):
+    if not isinstance(value, list):
+        return []
+    preview = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = str(item.get("content") or "")
+        if role in ("system", "user", "assistant") and content:
+            preview.append({"role": role, "content": content})
+    return preview
 
 
 def normalize_archived_chats(value):

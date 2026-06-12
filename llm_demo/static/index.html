@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AI Advent Day 9 — Сжатие истории</title>
-    <link rel="stylesheet" href="/static/style.css?v=4">
+    <link rel="stylesheet" href="/static/style.css?v=5">
   </head>
   <body>
     <main class="shell">
@@ -13,8 +13,9 @@
         <h1>Сжатие истории диалога</h1>
         <p class="lead">
           Сценарий: в начале диалога просим запомнить <strong>BLUEFOX / Kotlin / Orbit</strong>,
-          потом идёт шум из 14 вопросов про Python, затем проверка памяти.
-          Кнопка «Сравнить» покажет, сколько токенов съела бы вся история и сколько — сжатие.
+          потом идёт шум из 54 разных учебных реплик, затем проверка памяти.
+          Кнопка «Продолжить демо» добавит сценарий по одному сообщению в текущий чат,
+          чтобы было видно, когда появляется summary и как меняются токены.
         </p>
       </section>
 
@@ -26,7 +27,7 @@
         <h2>Как это работает</h2>
         <ol class="assignment-list story-steps">
           <li>В <strong>первом</strong> сообщении — три факта (кодовое слово, язык, проект)</li>
-          <li>Дальше — <strong>14</strong> коротких реплик про Python (история раздувается)</li>
+          <li>Дальше — <strong>54</strong> разные учебные реплики (история раздувается)</li>
           <li>Последний вопрос: «что было в первом сообщении?» — проверка recall</li>
           <li>Со сжатием: старое → <strong>резюме</strong>, в prompt только хвост + summary</li>
         </ol>
@@ -52,7 +53,8 @@
             </label>
             <div class="actions">
               <button id="send-button" class="primary-button" type="submit">Отправить</button>
-              <button id="compare-button" class="demo-button" type="button">Сравнить</button>
+              <button id="compare-button" class="demo-button" type="button">Продолжить демо</button>
+              <button id="current-compare-button" class="demo-button" type="button">A/B текущий чат</button>
               <button id="clear-button" class="secondary-button" type="button">Очистить</button>
             </div>
           </form>
@@ -78,7 +80,7 @@
           <section class="stats-section highlight-section compare-section">
             <h3>Сравнение</h3>
             <div id="compare-panel" class="compare-panel">
-              <p class="empty-state">Результаты появятся в блоке «До / После» выше после «Сравнить».</p>
+              <p class="empty-state">Нажмите «Продолжить демо», затем «A/B текущий чат».</p>
             </div>
           </section>
 
@@ -127,7 +129,7 @@
     </main>
 
     <script>
-      const COMPARE_STORAGE_KEY = "day9_compare_results_v2";
+      const COMPARE_STORAGE_KEY = "day9_visible_demo_results_v1";
       const form = document.querySelector("#chat-form");
       const messageInput = document.querySelector("#message");
       const compressionToggle = document.querySelector("#compression-enabled");
@@ -140,6 +142,7 @@
       const payloadPreview = document.querySelector("#payload-preview");
       const sendButton = document.querySelector("#send-button");
       const compareButton = document.querySelector("#compare-button");
+      const currentCompareButton = document.querySelector("#current-compare-button");
       const clearButton = document.querySelector("#clear-button");
       const tokenTripleBox = document.querySelector("#token-triple");
       const historySummaryBox = document.querySelector("#history-summary");
@@ -150,7 +153,7 @@
       const cumulativeBox = document.querySelector("#cumulative");
       const configBox = document.querySelector("#config");
       const turnTableBody = document.querySelector("#turn-table tbody");
-      const actionButtons = [sendButton, compareButton, clearButton];
+      const actionButtons = [sendButton, compareButton, currentCompareButton, clearButton];
 
       function setBusy(isBusy) {
         actionButtons.forEach((button) => { button.disabled = isBusy; });
@@ -215,6 +218,25 @@
           return item;
         }));
         messagesBox.scrollTop = messagesBox.scrollHeight;
+      }
+
+      function renderPendingUserMessage(content) {
+        if (messagesBox.querySelector(".empty-state")) {
+          messagesBox.replaceChildren();
+        }
+        const item = document.createElement("article");
+        item.className = "message message-user message-pending";
+        const role = document.createElement("strong");
+        role.textContent = "Вы";
+        const text = document.createElement("p");
+        text.textContent = content;
+        item.append(role, text);
+        messagesBox.append(item);
+        messagesBox.scrollTop = messagesBox.scrollHeight;
+      }
+
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
       }
 
       function renderDefinitionList(node, rows) {
@@ -327,18 +349,19 @@
 
         const without = pickCompareTrack(comparison, false);
         const withTrack = pickCompareTrack(comparison, true);
+        const isCurrentHistory = comparison.source === "current_history";
         const story = (visual.story || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("");
 
         return `
           <header class="viz-header">
-            <p class="eyebrow">До / После · recall-запрос</p>
+            <p class="eyebrow">${isCurrentHistory ? "A/B текущий чат · recall-запрос" : "До / После · recall-запрос"}</p>
             <h2 class="viz-headline">
               ${formatNumber(visual.headline_before)}
               <span class="viz-arrow">→</span>
               ${formatNumber(visual.headline_after)}
               <span class="viz-unit">tok</span>
             </h2>
-            <p class="viz-subhead">Экономия на последнем запросе: <strong>−${visual.headline_reduction_pct}%</strong></p>
+            <p class="viz-subhead">${isCurrentHistory ? "Экономия на recall по текущей истории" : "Экономия на последнем запросе"}: <strong>−${visual.headline_reduction_pct}%</strong></p>
           </header>
 
           <ol class="story-steps compact">${story}</ol>
@@ -371,8 +394,14 @@
         const breakdown = comparison.token_breakdown || {};
         const net = Number(breakdown.net_saved || 0);
         const netClass = net >= 0 ? "token-positive" : "token-negative";
+        const isCurrentHistory = comparison.source === "current_history";
+        const netLabel = isCurrentHistory ? "Net за A/B recall" : "Net за сценарий";
+        const mergeLine = isCurrentHistory
+          ? `<p class="meta-line">Merge overhead: ${formatNumber(breakdown.summarization_cost || 0)} tok</p>`
+          : "";
         return `
-          <p class="meta-line">Net за сценарий: <strong class="${netClass}">${net >= 0 ? "+" : ""}${formatNumber(net)} tok</strong></p>
+          <p class="meta-line">${netLabel}: <strong class="${netClass}">${net >= 0 ? "+" : ""}${formatNumber(net)} tok</strong></p>
+          ${mergeLine}
           <p class="meta-line">${formatQualityDelta(comparison.quality_delta)}</p>`;
       }
 
@@ -399,12 +428,107 @@
         legacyBanner.className = "legacy-banner";
         legacyBanner.textContent = data.legacy_hint || "Старая сессия в cookie. Нажмите «Очистить».";
       }
+
+      function renderComparePayloadPreview(without, withTrack) {
+        const payloads = {
+          without_compression_recall: without?.payload_preview || [],
+          with_compression_recall: withTrack?.payload_preview || [],
+        };
+        if (!payloads.without_compression_recall.length && !payloads.with_compression_recall.length) {
+          payloadPreview.textContent = "—";
+          return;
+        }
+        payloadPreview.textContent = JSON.stringify(payloads, null, 2);
+      }
+
+      function buildLiveDemoShowcase(data) {
+        const turn = data.current_turn || {};
+        const meta = turn.history_meta || {};
+        const cumulative = data.cumulative || {};
+        const judge = data.judge || turn.judge || {};
+        const before = Number(turn.prompt_tokens_full_estimated || 0);
+        const after = Number(turn.prompt_tokens_estimated || 0);
+        const savedPct = before > 0 ? Math.max(0, ((before - after) / before) * 100).toFixed(1) : "0.0";
+        const summaryChars = (data.history_summary || "").length;
+
+        return `
+          <header class="viz-header">
+            <p class="eyebrow">Live demo · текущий чат</p>
+            <h2 class="viz-headline">
+              ${formatNumber(before)}
+              <span class="viz-arrow">→</span>
+              ${formatNumber(after)}
+              <span class="viz-unit">tok</span>
+            </h2>
+            <p class="viz-subhead">Финальный recall prompt: <strong>−${savedPct}%</strong></p>
+          </header>
+
+          <div class="viz-bars">
+            ${buildBarRow({
+              label: "Без сжатия — counterfactual full prompt",
+              tokens: before,
+              width_pct: 100,
+              tone: "bad",
+              detail: `${formatNumber(meta.messages_total)} сообщений · ≈${formatNumber(before)} tok`,
+            })}
+            ${buildBarRow({
+              label: "Со сжатием — реально отправлено",
+              tokens: after,
+              width_pct: before > 0 ? Math.max(4, Math.round(after / before * 1000) / 10) : 4,
+              tone: "good",
+              detail: `${formatNumber(meta.messages_sent)} сообщ. + ${formatNumber(summaryChars)} симв. summary · ≈${formatNumber(after)} tok`,
+            })}
+          </div>
+
+          <table class="viz-table">
+            <tbody>
+              <tr>
+                <th scope="row">Сообщений в prompt</th>
+                <td>${formatNumber(meta.messages_total)}</td>
+                <td>${formatNumber(meta.messages_sent)}</td>
+                <td class="viz-saved">−${meta.messages_total ? Math.round((meta.messages_total - meta.messages_sent) / meta.messages_total * 1000) / 10 : 0}%</td>
+              </tr>
+              <tr>
+                <th scope="row">Обновлений summary</th>
+                <td colspan="3">${formatNumber(data.compression?.updates?.length || 0)}</td>
+              </tr>
+              <tr>
+                <th scope="row">Net за диалог</th>
+                <td colspan="3" class="${Number(cumulative.tokens_net_saved || 0) >= 0 ? "token-positive" : "token-negative"}">${formatNumber(cumulative.tokens_net_saved)} tok</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="compare-grid viz-answers">
+            <article class="compare-card">
+              <h4>Recall answer</h4>
+              ${renderFactChecklist(judge.facts)}
+              <p class="compare-answer">${escapeHtml(data.reply || "—")}</p>
+            </article>
+            <article class="compare-card">
+              <h4>Summary в system prompt</h4>
+              <pre class="summary-snippet">${escapeHtml(data.history_summary || "—")}</pre>
+            </article>
+          </div>`;
+      }
+
+      function renderLiveDemoResult(data) {
+        compareShowcase.className = "compare-showcase panel";
+        compareShowcase.innerHTML = buildLiveDemoShowcase(data);
+        const cumulative = data.cumulative || {};
+        const turn = data.current_turn || {};
+        comparePanel.innerHTML = `
+          <p class="meta-line">Net за весь чат: <strong class="${Number(cumulative.tokens_net_saved || 0) >= 0 ? "token-positive" : "token-negative"}">${formatNumber(cumulative.tokens_net_saved)} tok</strong></p>
+          <p class="meta-line">Финальный prompt: ${formatNumber(turn.prompt_tokens_full_estimated)} → ${formatNumber(turn.prompt_tokens_estimated)} tok</p>`;
+      }
+
       function renderCompare(comparison, options = {}) {
         const { scroll = false, persist = false } = options;
 
         if (!comparison) {
-          comparePanel.innerHTML = '<p class="empty-state">Результаты появятся в блоке «До / После» выше после «Сравнить».</p>';
+          comparePanel.innerHTML = '<p class="empty-state">Нажмите «Продолжить демо», затем «A/B текущий чат».</p>';
           clearCompareShowcase();
+          payloadPreview.textContent = "—";
           return;
         }
 
@@ -413,6 +537,7 @@
         if (!without || !withTrack) {
           comparePanel.innerHTML = '<p class="empty-state">Не удалось разобрать ответ сервера.</p>';
           clearCompareShowcase();
+          payloadPreview.textContent = "—";
           try {
             sessionStorage.removeItem(COMPARE_STORAGE_KEY);
           } catch (storageError) {
@@ -424,6 +549,7 @@
         compareShowcase.className = "compare-showcase panel";
         compareShowcase.innerHTML = buildVisualShowcase(comparison);
         comparePanel.innerHTML = buildCompareSidebar(comparison);
+        renderComparePayloadPreview(without, withTrack);
 
         if (persist) {
           try {
@@ -568,15 +694,69 @@
 
       compareButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("Сравниваем…", "busy");
-        showAlert("Сценарий сравнения делает много запросов к OpenRouter и тратит баланс ключа.", "warn");
+        setStatus("Продолжаем демо…", "busy");
+        showAlert("Сценарий добавится в текущий чат. История не очищается, summary продолжит сжимать старые сообщения batch по 10.", "warn");
         try {
-          const response = await fetch("/api/demo/compression-compare", { method: "POST" });
+          sessionStorage.removeItem(COMPARE_STORAGE_KEY);
+          compressionToggle.checked = true;
+
+          const scriptResponse = await fetch("/api/demo/compression-script");
+          const script = await scriptResponse.json();
+          if (!scriptResponse.ok) throw new Error(script.error || "Не удалось загрузить сценарий");
+
+          let lastData = null;
+          for (const step of script.steps || []) {
+            const stepNumber = step.index + 1;
+            setStatus(`Шаг ${stepNumber}/${script.total_steps}`, "busy");
+            comparePanel.innerHTML = `<p class="meta-line">Шаг ${stepNumber}/${script.total_steps}: сообщение отправляется в чат…</p>`;
+            renderPendingUserMessage(step.message);
+
+            const response = await fetch("/api/demo/compression-step", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ step_index: step.index }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "Шаг демо не удался");
+            lastData = data;
+            renderState(data);
+            comparePanel.innerHTML = `<p class="meta-line">Шаг ${stepNumber}/${script.total_steps}: UI обновлён. Summary updates: ${formatNumber(data.compression?.updates?.length || 0)}</p>`;
+            await sleep(80);
+          }
+
+          if (lastData) {
+            renderLiveDemoResult(lastData);
+            showAlert("Видимый прогон готов: сообщения прошли через чат, summary и токены обновлялись по шагам.", "ok");
+          }
+          setStatus("Демо готово", "ok");
+        } catch (error) {
+          showAlert(error.message, "error");
+          setStatus("Ошибка", "error");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      currentCompareButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("A/B по текущей истории…", "busy");
+        showAlert("Сравнение делает 2 live-запроса к модели и при необходимости merge summary. Чат не очищается, recall не добавляется в сообщения.", "warn");
+        try {
+          sessionStorage.removeItem(COMPARE_STORAGE_KEY);
+          compressionToggle.checked = true;
+
+          const response = await fetch("/api/demo/current-comparison", {
+            method: "POST",
+          });
           const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Сравнение не удалось");
+          if (!response.ok) throw new Error(data.error || "Сравнение текущей истории не удалось");
+
+          if (data.state) {
+            renderState(data.state);
+          }
           renderCompare(data.comparison, { scroll: true, persist: true });
-          showAlert(data.comparison?.visual?.punchline || data.comparison?.verdict || "Сравнение готово.", "ok");
-          setStatus("Сравнение готово", "ok");
+          showAlert("A/B готов: сравнили текущую историю без очистки и без скрытого добавления сообщений в чат.", "ok");
+          setStatus("A/B готово", "ok");
         } catch (error) {
           showAlert(error.message, "error");
           setStatus("Ошибка", "error");

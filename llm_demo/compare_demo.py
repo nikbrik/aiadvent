@@ -20,25 +20,74 @@ COMPARE_PINNED_FACTS = [
 ]
 COMPARE_STORY = [
     "Шаг 1 — в начале диалога просим запомнить BLUEFOX / Kotlin / Orbit.",
-    "Шаг 2 — 14 коротких вопросов про Python (шум, история растёт).",
+    "Шаг 2 — 54 разные учебные реплики (шум, история заметно растёт).",
     "Шаг 3 — recall: «что было в первом сообщении?»",
 ]
 
 _COMPARE_FILLER_TOPICS = [
-    "list comprehensions",
-    "generators",
-    "tuple vs list",
-    "decorators",
-    "GIL",
-    "asyncio",
-    "dataclass",
-    "dict",
-    "context managers",
-    "append vs extend",
-    "lambda",
-    "type hints",
-    "exceptions",
-    "pytest",
+    ("list comprehensions", "Python collections"),
+    ("generators", "lazy iteration"),
+    ("tuple vs list", "data structures"),
+    ("decorators", "Python functions"),
+    ("GIL", "runtime internals"),
+    ("asyncio", "concurrency"),
+    ("dataclass", "data modeling"),
+    ("dict", "hash maps"),
+    ("context managers", "resource handling"),
+    ("append vs extend", "list operations"),
+    ("lambda", "small functions"),
+    ("type hints", "static analysis"),
+    ("exceptions", "error handling"),
+    ("pytest fixtures", "testing"),
+    ("mock objects", "testing doubles"),
+    ("property-based tests", "quality"),
+    ("logging levels", "observability"),
+    ("structured logs", "observability"),
+    ("retry with backoff", "resilience"),
+    ("idempotency keys", "API design"),
+    ("pagination", "REST APIs"),
+    ("rate limiting", "backend safety"),
+    ("caching TTL", "performance"),
+    ("cache invalidation", "performance"),
+    ("database indexes", "storage"),
+    ("transaction isolation", "databases"),
+    ("optimistic locking", "concurrency"),
+    ("message queues", "architecture"),
+    ("dead-letter queues", "messaging"),
+    ("feature flags", "release engineering"),
+    ("canary rollout", "deployment"),
+    ("blue-green deployment", "deployment"),
+    ("health checks", "operations"),
+    ("Kotlin data classes", "Kotlin"),
+    ("sealed interfaces", "Kotlin"),
+    ("coroutines", "Kotlin concurrency"),
+    ("Flow", "Kotlin streams"),
+    ("Orbit MVI", "mobile architecture"),
+    ("state reducer", "frontend state"),
+    ("side effects", "state management"),
+    ("accessibility labels", "frontend quality"),
+    ("keyboard navigation", "frontend UX"),
+    ("responsive grids", "layout"),
+    ("semantic HTML", "web basics"),
+    ("CORS", "browser security"),
+    ("CSRF", "web security"),
+    ("JWT expiry", "auth"),
+    ("refresh tokens", "auth"),
+    ("PII redaction", "privacy"),
+    ("token counting", "LLM apps"),
+    ("prompt injection", "LLM safety"),
+    ("context windows", "LLM apps"),
+    ("summary drift", "LLM memory"),
+    ("embedding search", "retrieval"),
+]
+
+_COMPARE_PROMPT_TEMPLATES = [
+    "Объясни тему «{topic}» ({area}) для junior-разработчика: назначение, риск, практический совет. Дай 4 коротких предложения.",
+    "Составь мини-конспект про «{topic}» из области {area}: когда применять, когда не применять, один пример словами. Ответ 4 предложения.",
+    "Представь code review: что проверить в теме «{topic}» ({area})? Назови пользу, типичную ошибку и критерий готовности. Пиши кратко.",
+    "Сделай карточку знания про «{topic}» ({area}): определение, сигнал к применению, антипример, итог. Без markdown.",
+    "Объясни на рабочем примере «{topic}» ({area}): контекст задачи, решение, компромисс, проверка результата. 4 коротких предложения.",
+    "Дай практическую заметку про «{topic}» ({area}): зачем нужно, как внедрить, что измерить, где осторожничать.",
 ]
 
 
@@ -47,10 +96,17 @@ def compare_script_steps():
     steps = [
         {"user": COMPARE_SECRET_PROMPT, "assistant": "OK"},
     ]
-    for index, topic in enumerate(_COMPARE_FILLER_TOPICS, start=1):
+    for index, (topic, area) in enumerate(_COMPARE_FILLER_TOPICS, start=1):
+        template = _COMPARE_PROMPT_TEMPLATES[(index - 1) % len(_COMPARE_PROMPT_TEMPLATES)]
         steps.append({
-            "user": f"Коротко: {topic} в Python.",
-            "assistant": f"#{index}: {topic} — одно предложение для demo.",
+            "user": template.format(topic=topic, area=area),
+            "assistant": (
+                f"#{index}: {topic} ({area}) — отдельная учебная реплика для demo. "
+                f"Смысл: показать практический приём и добавить в историю новый контекст. "
+                f"Польза: тема помогает принять более явное инженерное решение. "
+                f"Риск: применять {topic} механически без проверки задачи и ограничений. "
+                "Проверка: после применения должно стать проще объяснить поведение системы."
+            ),
         })
     steps.append({"user": COMPARE_RECALL_PROMPT, "assistant": None})
     return steps

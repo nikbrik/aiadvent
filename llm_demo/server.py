@@ -5,9 +5,14 @@ import uuid
 
 from flask import Flask, g, jsonify, request, send_from_directory
 
-from agent import ChatAgent, FileMemoryStore
-from http_log import log_exchange
-from llm_client import OpenRouterError, chat_completion
+try:
+    from agent import ChatAgent, FileMemoryStore
+    from http_log import log_exchange
+    from llm_client import OpenRouterError, chat_completion
+except ImportError:
+    from .agent import ChatAgent, FileMemoryStore
+    from .http_log import log_exchange
+    from .llm_client import OpenRouterError, chat_completion
 
 
 logging.basicConfig(
@@ -145,10 +150,40 @@ def clear_chat():
     return jsonify(agent.clear(g.client_id))
 
 
+@app.get("/api/demo/compression-script")
+def demo_compression_script():
+    return jsonify(agent.demo_compression_script())
+
+
+@app.post("/api/demo/compression-step")
+def demo_compression_step():
+    if not request.is_json:
+        return error_response("Request body must be application/json", 400)
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = agent.run_demo_compression_step(g.client_id, payload.get("step_index"))
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except OpenRouterError as exc:
+        return error_response(str(exc), exc.status)
+
+    return jsonify(result)
+
+
 @app.post("/api/demo/compression-compare")
 def demo_compression_compare():
     try:
         result = agent.run_demo_compression_compare(g.client_id)
+    except OpenRouterError as exc:
+        return error_response(str(exc), exc.status)
+    return jsonify(result)
+
+
+@app.post("/api/demo/current-comparison")
+def demo_current_compression_compare():
+    try:
+        result = agent.run_current_history_compression_compare(g.client_id)
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
     return jsonify(result)
