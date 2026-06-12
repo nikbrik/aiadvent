@@ -5,14 +5,10 @@ import uuid
 
 from flask import Flask, g, jsonify, request, send_from_directory
 
-try:
-    from agent import ChatAgent, FileMemoryStore
-    from http_log import log_exchange
-    from llm_client import OpenRouterError, chat_completion
-except ImportError:
-    from .agent import ChatAgent, FileMemoryStore
-    from .http_log import log_exchange
-    from .llm_client import OpenRouterError, chat_completion
+from agent import ChatAgent, FileMemoryStore
+from demo_script import DEMO_MESSAGES, DEMO_NEW_CHAT_STEPS, DEMO_TOTAL
+from http_log import log_exchange
+from llm_client import OpenRouterError, chat_completion
 
 
 logging.basicConfig(
@@ -115,14 +111,12 @@ def log_outgoing_response(response):
 
 @app.get("/")
 def index():
-    response = send_from_directory(app.static_folder, "index.html")
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    return send_from_directory(app.static_folder, "index.html")
 
 
 @app.get("/api/chat")
 def chat_state():
-    return jsonify(agent.snapshot(g.client_id))
+    return jsonify(with_demo_metadata(agent.snapshot(g.client_id)))
 
 
 @app.post("/api/chat")
@@ -131,62 +125,70 @@ def chat():
         return error_response("Request body must be application/json", 400)
 
     payload = request.get_json(silent=True) or {}
-    compression = payload.get("compression")
-    if compression is not None:
-        compression = bool(compression)
-
     try:
-        result = agent.respond(g.client_id, payload.get("message", ""), compression=compression)
+        result = agent.respond(g.client_id, payload.get("message", ""))
     except ValueError as exc:
         return error_response(str(exc), 400)
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
 
-    return jsonify(result)
+    return jsonify(with_demo_metadata(result))
 
 
-@app.delete("/api/chat")
-def clear_chat():
-    return jsonify(agent.clear(g.client_id))
+@app.post("/api/chat/new")
+def new_chat():
+    return jsonify(with_demo_metadata(agent.start_new_chat(g.client_id)))
 
 
-@app.get("/api/demo/compression-script")
-def demo_compression_script():
-    return jsonify(agent.demo_compression_script())
-
-
-@app.post("/api/demo/compression-step")
-def demo_compression_step():
+@app.post("/api/chat/resume")
+def resume_chat():
     if not request.is_json:
         return error_response("Request body must be application/json", 400)
 
     payload = request.get_json(silent=True) or {}
     try:
-        result = agent.run_demo_compression_step(g.client_id, payload.get("step_index"))
+        result = agent.resume_chat(g.client_id, payload.get("chat_id", ""))
     except ValueError as exc:
         return error_response(str(exc), 400)
-    except OpenRouterError as exc:
-        return error_response(str(exc), exc.status)
 
-    return jsonify(result)
+    return jsonify(with_demo_metadata(result))
 
 
-@app.post("/api/demo/compression-compare")
-def demo_compression_compare():
+@app.delete("/api/chat")
+def clear_chat():
+    return jsonify(with_demo_metadata(agent.clear(g.client_id)))
+
+
+@app.post("/api/demo/next")
+def demo_next():
+    state = agent.snapshot(g.client_id)
+    progress = min(int(state.get("demo_progress", 0)), DEMO_TOTAL)
+    if progress >= DEMO_TOTAL:
+        return jsonify(with_demo_metadata(state, complete=True))
+
+    step_number = progress + 1
+    if step_number in DEMO_NEW_CHAT_STEPS:
+        agent.start_new_chat(g.client_id)
+
     try:
-        result = agent.run_demo_compression_compare(g.client_id)
+        result = agent.respond(g.client_id, DEMO_MESSAGES[progress])
+        agent.set_demo_progress(g.client_id, step_number)
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
-    return jsonify(result)
+
+    result["demo_step"] = step_number
+    result["demo_message"] = DEMO_MESSAGES[progress]
+    result["demo_progress"] = step_number
+    return jsonify(with_demo_metadata(result))
 
 
-@app.post("/api/demo/current-comparison")
-def demo_current_compression_compare():
-    try:
-        result = agent.run_current_history_compression_compare(g.client_id)
-    except OpenRouterError as exc:
-        return error_response(str(exc), exc.status)
-    return jsonify(result)
+def with_demo_metadata(data, complete=None):
+    data = dict(data)
+    progress = min(int(data.get("demo_progress", 0)), DEMO_TOTAL)
+    data["demo_progress"] = progress
+    data["demo_total"] = DEMO_TOTAL
+    data["demo_complete"] = progress >= DEMO_TOTAL if complete is None else complete
+    return data
 
 
 def error_response(message, status):
@@ -196,4 +198,4 @@ def error_response(message, status):
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "5000"))
-    app.run(host=host, port=port, threaded=True)
+    app.run(host=host, port=port)

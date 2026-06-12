@@ -3,34 +3,17 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AI Advent Day 9 — Сжатие истории</title>
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <title>AI Advent Day 7 Context</title>
+    <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 9</p>
-        <h1>Сжатие истории диалога</h1>
+        <p class="eyebrow">AI Advent · День 7</p>
+        <h1>Сохранение контекста</h1>
         <p class="lead">
-          Сценарий: в начале диалога просим запомнить <strong>BLUEFOX / Kotlin / Orbit</strong>,
-          потом идёт шум из 54 разных учебных реплик, затем проверка памяти.
-          Кнопка «Продолжить демо» добавит сценарий по одному сообщению в текущий чат,
-          чтобы было видно, когда появляется summary и как меняются токены.
+          Чат-агент сохраняет messages в JSON и восстанавливает диалог после перезапуска.
         </p>
-      </section>
-
-      <div id="legacy-banner" class="legacy-banner hidden" role="status"></div>
-
-      <section id="compare-showcase" class="compare-showcase panel hidden" aria-live="polite"></section>
-
-      <section class="assignment-panel panel">
-        <h2>Как это работает</h2>
-        <ol class="assignment-list story-steps">
-          <li>В <strong>первом</strong> сообщении — три факта (кодовое слово, язык, проект)</li>
-          <li>Дальше — <strong>54</strong> разные учебные реплики (история раздувается)</li>
-          <li>Последний вопрос: «что было в первом сообщении?» — проверка recall</li>
-          <li>Со сжатием: старое → <strong>резюме</strong>, в prompt только хвост + summary</li>
-        </ol>
       </section>
 
       <section class="workspace">
@@ -43,122 +26,80 @@
           <div id="messages" class="messages" aria-live="polite"></div>
 
           <form id="chat-form" class="composer">
-            <label class="field compression-toggle">
-              <input id="compression-enabled" type="checkbox" checked>
-              <span>Сжатие истории включено</span>
-            </label>
             <label class="field">
               <span>Сообщение</span>
-              <textarea id="message" rows="3" required placeholder="Напишите агенту…"></textarea>
+              <textarea id="message" rows="4" required placeholder="Напишите агенту..."></textarea>
             </label>
             <div class="actions">
               <button id="send-button" class="primary-button" type="submit">Отправить</button>
-              <button id="compare-button" class="demo-button" type="button">Продолжить демо</button>
-              <button id="current-compare-button" class="demo-button" type="button">A/B текущий чат</button>
-              <button id="clear-button" class="secondary-button" type="button">Очистить</button>
+              <button id="demo-button" class="demo-button" type="button">Тестовый сценарий 0/25</button>
+              <button id="new-button" class="secondary-button" type="button">Новый чат</button>
+              <button id="clear-button" class="danger-button" type="button">Очистить память</button>
             </div>
           </form>
 
-          <div id="alert" class="alert hidden" role="alert"></div>
-          <details id="payload-details" class="payload-details">
-            <summary>Что именно отправилось модели</summary>
-            <pre id="payload-preview" class="payload-preview"></pre>
-          </details>
-          <div id="metadata" class="metadata">Служебная информация об ответе появится здесь.</div>
+          <div id="metadata" class="metadata">Метаданные появятся после ответа.</div>
         </section>
 
-        <aside class="panel stats-panel">
+        <aside class="panel memory-panel">
           <div class="panel-head">
-            <h2>Токены и сжатие</h2>
+            <h2>Память</h2>
           </div>
 
-          <section class="stats-section highlight-section">
-            <h3>Последний обмен</h3>
-            <div id="token-triple" class="token-triple"></div>
+          <section class="memory-section">
+            <h3>Стиль</h3>
+            <p id="style-memory" class="memory-text">Пока нет данных.</p>
           </section>
 
-          <section class="stats-section highlight-section compare-section">
-            <h3>Сравнение</h3>
-            <div id="compare-panel" class="compare-panel">
-              <p class="empty-state">Нажмите «Продолжить демо», затем «A/B текущий чат».</p>
-            </div>
+          <section class="memory-section">
+            <h3>Факты</h3>
+            <ul id="facts-memory" class="memory-list"></ul>
           </section>
 
-          <section class="stats-section">
-            <h3>Резюме старых сообщений</h3>
-            <p id="history-summary" class="memory-text">Пока пусто.</p>
-            <p id="compression-meta" class="meta-line"></p>
-            <ul id="compression-journal" class="memory-list"></ul>
+          <section class="memory-section">
+            <h3>Выводы</h3>
+            <ul id="inferences-memory" class="memory-list"></ul>
           </section>
 
-          <section class="stats-section">
-            <h3>Экономия токенов</h3>
-            <dl id="net-savings" class="stats-grid compact-grid"></dl>
+          <section class="memory-section">
+            <h3>Текущий summary</h3>
+            <p id="current-summary" class="memory-text">Пока нет данных.</p>
           </section>
 
-          <section class="stats-section">
-            <h3>Итого за диалог</h3>
-            <dl id="cumulative" class="stats-grid compact-grid"></dl>
-          </section>
-
-          <section class="stats-section">
-            <h3>История обменов</h3>
-            <div class="table-wrap">
-              <table id="turn-table" class="turn-table">
-                <thead>
-                  <tr>
-                    <th>№</th>
-                    <th>Сжатие</th>
-                    <th>Вся история</th>
-                    <th>В запросе</th>
-                    <th>Запрос</th>
-                    <th>Сэкономлено</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="stats-section">
-            <h3>Настройки</h3>
-            <dl id="config" class="stats-grid compact-grid"></dl>
+          <section class="memory-section">
+            <h3>Прошлые чаты</h3>
+            <ul id="archived-memory" class="memory-list"></ul>
           </section>
         </aside>
       </section>
     </main>
 
     <script>
-      const COMPARE_STORAGE_KEY = "day9_visible_demo_results_v1";
       const form = document.querySelector("#chat-form");
       const messageInput = document.querySelector("#message");
-      const compressionToggle = document.querySelector("#compression-enabled");
       const messagesBox = document.querySelector("#messages");
       const statusBox = document.querySelector("#status");
       const metadataBox = document.querySelector("#metadata");
-      const alertBox = document.querySelector("#alert");
-      const legacyBanner = document.querySelector("#legacy-banner");
-      const compareShowcase = document.querySelector("#compare-showcase");
-      const payloadPreview = document.querySelector("#payload-preview");
       const sendButton = document.querySelector("#send-button");
-      const compareButton = document.querySelector("#compare-button");
-      const currentCompareButton = document.querySelector("#current-compare-button");
+      const demoButton = document.querySelector("#demo-button");
+      const newButton = document.querySelector("#new-button");
       const clearButton = document.querySelector("#clear-button");
-      const tokenTripleBox = document.querySelector("#token-triple");
-      const historySummaryBox = document.querySelector("#history-summary");
-      const compressionMetaBox = document.querySelector("#compression-meta");
-      const compressionJournal = document.querySelector("#compression-journal");
-      const comparePanel = document.querySelector("#compare-panel");
-      const netSavingsBox = document.querySelector("#net-savings");
-      const cumulativeBox = document.querySelector("#cumulative");
-      const configBox = document.querySelector("#config");
-      const turnTableBody = document.querySelector("#turn-table tbody");
-      const actionButtons = [sendButton, compareButton, currentCompareButton, clearButton];
+      const styleMemory = document.querySelector("#style-memory");
+      const factsMemory = document.querySelector("#facts-memory");
+      const inferencesMemory = document.querySelector("#inferences-memory");
+      const currentSummary = document.querySelector("#current-summary");
+      const archivedMemory = document.querySelector("#archived-memory");
+      let demoComplete = false;
 
       function setBusy(isBusy) {
-        actionButtons.forEach((button) => { button.disabled = isBusy; });
+        sendButton.disabled = isBusy;
+        demoButton.disabled = isBusy || demoComplete;
+        newButton.disabled = isBusy;
+        clearButton.disabled = isBusy;
         messageInput.disabled = isBusy;
-        compressionToggle.disabled = isBusy;
+        archivedMemory.querySelectorAll("button").forEach((button) => {
+          button.disabled = isBusy;
+        });
       }
 
       function setStatus(text, mode = "") {
@@ -166,600 +107,223 @@
         statusBox.className = mode ? `status ${mode}` : "status";
       }
 
-      function showAlert(text, mode = "warn") {
-        if (!text) {
-          alertBox.className = "alert hidden";
-          alertBox.textContent = "";
-          return;
-        }
-        alertBox.className = `alert ${mode}`;
-        alertBox.textContent = text;
-      }
-
-      const QUALITY_DELTA_LABELS = {
-        with_scored_higher: "со сжатием ответили точнее",
-        with_scored_lower: "со сжатием ответили хуже",
-        similar: "качество примерно одинаковое",
-        equivalent_recall: "recall эквивалентен — все факты на месте",
-      };
-
-      const PAYBACK_LABELS = {
-        yes: "сжатие окупилось за сценарий",
-        not_yet: "overhead merge ещё не окупился",
-      };
-
-      function formatQualityDelta(value) {
-        return QUALITY_DELTA_LABELS[value] || value || "—";
-      }
-
-      function formatNumber(value) {
-        if (value === null || value === undefined || value === "") return "—";
-        return Number(value).toLocaleString("ru-RU");
-      }
-
-      function formatCost(value) {
-        if (value === null || value === undefined) return "—";
-        return `$${Number(value).toFixed(6)}`;
-      }
-
       function renderMessages(messages) {
-        if (!messages?.length) {
+        if (!messages || messages.length === 0) {
           messagesBox.innerHTML = '<p class="empty-state">Сообщений пока нет.</p>';
           return;
         }
+
         messagesBox.replaceChildren(...messages.map((message) => {
           const item = document.createElement("article");
           item.className = `message message-${message.role}`;
+
           const role = document.createElement("strong");
           role.textContent = message.role === "user" ? "Вы" : "Агент";
+
           const content = document.createElement("p");
           content.textContent = message.content;
+
           item.append(role, content);
           return item;
         }));
         messagesBox.scrollTop = messagesBox.scrollHeight;
       }
 
-      function renderPendingUserMessage(content) {
-        if (messagesBox.querySelector(".empty-state")) {
-          messagesBox.replaceChildren();
-        }
-        const item = document.createElement("article");
-        item.className = "message message-user message-pending";
-        const role = document.createElement("strong");
-        role.textContent = "Вы";
-        const text = document.createElement("p");
-        text.textContent = content;
-        item.append(role, text);
-        messagesBox.append(item);
-        messagesBox.scrollTop = messagesBox.scrollHeight;
-      }
-
-      function sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-      }
-
-      function renderDefinitionList(node, rows) {
-        node.replaceChildren(...rows.flatMap(([label, value]) => {
-          const dt = document.createElement("dt");
-          dt.textContent = label;
-          const dd = document.createElement("dd");
-          dd.textContent = value;
-          return [dt, dd];
-        }));
-      }
-
-      function renderTokenTriple(data) {
-        const turn = data.current_turn || data.last_turn;
-        if (!turn) {
-          tokenTripleBox.innerHTML = '<p class="empty-state">Отправьте сообщение.</p>';
+      function renderList(node, items, emptyText) {
+        const values = (items || []).filter(Boolean);
+        if (values.length === 0) {
+          node.innerHTML = `<li class="empty-list">${emptyText}</li>`;
           return;
         }
-        const cards = [
-          { label: "Ваше сообщение", value: turn.current_request_tokens },
-          { label: "История в запросе", value: turn.history_tokens_sent ?? turn.history_tokens },
-          { label: "Ответ модели", value: turn.response_tokens_estimated },
-        ];
-        tokenTripleBox.replaceChildren(...cards.map((card) => {
-          const item = document.createElement("article");
-          item.className = "token-card";
-          item.innerHTML = `<h4>${card.label}</h4><p class="token-value">${formatNumber(card.value)}</p>`;
+        node.replaceChildren(...values.map((value) => {
+          const item = document.createElement("li");
+          item.textContent = value.summary || value;
           return item;
         }));
       }
 
-      function renderSummary(data) {
-        historySummaryBox.textContent = data.history_summary || "Пока пусто.";
-        const comp = data.compression || {};
-        compressionMetaBox.textContent =
-          `Сжато сообщений: ${comp.summarized_through || 0} из ${data.messages?.length || 0} · обновлений резюме: ${comp.updates?.length || 0}`;
-        compressionJournal.replaceChildren(...(comp.updates || []).map((item) => {
-          const li = document.createElement("li");
-          li.textContent =
-            `После ${item.summarized_through} сообщ.: сжали ${item.batch_size}, резюме ${item.summary_chars} симв.` +
-            (item.used_fallback ? " (упрощённый режим)" : "");
-          return li;
+      function renderMemory(data) {
+        const profile = data.profile || {};
+        styleMemory.textContent = profile.style || "Пока нет данных.";
+        currentSummary.textContent = data.current_chat_summary || "Пока нет данных.";
+        renderList(factsMemory, profile.facts, "Фактов пока нет.");
+        renderList(inferencesMemory, profile.inferences, "Выводов пока нет.");
+        renderArchivedChats(data.archived_chats || []);
+      }
+
+      function renderArchivedChats(chats) {
+        const values = chats.filter(Boolean);
+        if (values.length === 0) {
+          archivedMemory.innerHTML = '<li class="empty-list">Прошлых чатов пока нет.</li>';
+          return;
+        }
+
+        archivedMemory.replaceChildren(...values.map((chat) => {
+          const item = document.createElement("li");
+          item.className = "archived-chat";
+
+          const summary = document.createElement("span");
+          summary.className = "archived-summary";
+          summary.textContent = chat.summary || "Чат без summary.";
+
+          const meta = document.createElement("span");
+          meta.className = "archived-meta";
+          const count = chat.messages ? chat.messages.length : chat.message_count || 0;
+          meta.textContent = count ? `${count} сообщений` : "только summary";
+
+          item.append(summary, meta);
+
+          if (chat.id && count > 0) {
+            const button = document.createElement("button");
+            button.className = "chat-switch-button";
+            button.type = "button";
+            button.dataset.chatId = chat.id;
+            button.textContent = "Вернуться";
+            item.append(button);
+          }
+
+          return item;
         }));
-      }
-
-      function pickCompareTrack(comparison, compressed) {
-        if (!comparison) return null;
-        if (compressed) {
-          return comparison.with_compression || comparison.with || null;
-        }
-        return comparison.without_compression || comparison.without || null;
-      }
-
-      function escapeHtml(value) {
-        return String(value)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
-
-      function clearCompareShowcase() {
-        compareShowcase.className = "compare-showcase panel hidden";
-        compareShowcase.replaceChildren();
-      }
-
-      function buildBarRow(bar) {
-        return `
-          <div class="viz-bar-row">
-            <div class="viz-bar-head">
-              <strong>${escapeHtml(bar.label)}</strong>
-              <span class="viz-bar-tokens">${formatNumber(bar.tokens)} tok</span>
-            </div>
-            <div class="viz-bar-track" aria-hidden="true">
-              <div class="viz-bar-fill viz-bar-${bar.tone}" style="width:${bar.width_pct}%"></div>
-            </div>
-            <p class="viz-bar-detail">${escapeHtml(bar.detail)}</p>
-          </div>`;
-      }
-
-      function buildVisualTable(rows) {
-        const body = rows.map((row) => {
-          const saved = row.saved_pct != null ? `−${row.saved_pct}%` : "—";
-          return `
-            <tr>
-              <th scope="row">${escapeHtml(row.label)}</th>
-              <td>${formatNumber(row.before)}</td>
-              <td>${formatNumber(row.after)}</td>
-              <td class="viz-saved">${saved}</td>
-            </tr>`;
-        }).join("");
-        return `
-          <table class="viz-table">
-            <thead>
-              <tr>
-                <th></th>
-                <th>Без сжатия</th>
-                <th>Со сжатием</th>
-                <th>Δ</th>
-              </tr>
-            </thead>
-            <tbody>${body}</tbody>
-          </table>`;
-      }
-
-      function buildVisualShowcase(comparison) {
-        const visual = comparison.visual;
-        if (!visual) return "";
-
-        const without = pickCompareTrack(comparison, false);
-        const withTrack = pickCompareTrack(comparison, true);
-        const isCurrentHistory = comparison.source === "current_history";
-        const story = (visual.story || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("");
-
-        return `
-          <header class="viz-header">
-            <p class="eyebrow">${isCurrentHistory ? "A/B текущий чат · recall-запрос" : "До / После · recall-запрос"}</p>
-            <h2 class="viz-headline">
-              ${formatNumber(visual.headline_before)}
-              <span class="viz-arrow">→</span>
-              ${formatNumber(visual.headline_after)}
-              <span class="viz-unit">tok</span>
-            </h2>
-            <p class="viz-subhead">${isCurrentHistory ? "Экономия на recall по текущей истории" : "Экономия на последнем запросе"}: <strong>−${visual.headline_reduction_pct}%</strong></p>
-          </header>
-
-          <ol class="story-steps compact">${story}</ol>
-
-          <div class="viz-bars">${visual.bars.map(buildBarRow).join("")}</div>
-
-          ${buildVisualTable(visual.table)}
-
-          <div class="compare-grid viz-answers">
-            <article class="compare-card">
-              <h4>Ответ без сжатия</h4>
-              ${renderFactChecklist(without?.judge?.facts)}
-              <p class="compare-answer">${escapeHtml(without?.answer || "—")}</p>
-            </article>
-            <article class="compare-card">
-              <h4>Ответ со сжатием</h4>
-              ${renderFactChecklist(withTrack?.judge?.facts)}
-              <p class="compare-answer">${escapeHtml(withTrack?.answer || "—")}</p>
-              <details class="summary-preview">
-                <summary>Резюме в system prompt</summary>
-                <pre class="summary-snippet">${escapeHtml(withTrack?.summary || "—")}</pre>
-              </details>
-            </article>
-          </div>
-
-          <p class="compare-verdict">${escapeHtml(comparison.verdict || visual.punchline || "")}</p>`;
-      }
-
-      function buildCompareSidebar(comparison) {
-        const breakdown = comparison.token_breakdown || {};
-        const net = Number(breakdown.net_saved || 0);
-        const netClass = net >= 0 ? "token-positive" : "token-negative";
-        const isCurrentHistory = comparison.source === "current_history";
-        const netLabel = isCurrentHistory ? "Net за A/B recall" : "Net за сценарий";
-        const mergeLine = isCurrentHistory
-          ? `<p class="meta-line">Merge overhead: ${formatNumber(breakdown.summarization_cost || 0)} tok</p>`
-          : "";
-        return `
-          <p class="meta-line">${netLabel}: <strong class="${netClass}">${net >= 0 ? "+" : ""}${formatNumber(net)} tok</strong></p>
-          ${mergeLine}
-          <p class="meta-line">${formatQualityDelta(comparison.quality_delta)}</p>`;
-      }
-
-      function buildCompareMarkup(without, withTrack, comparison) {
-        return buildCompareSidebar(comparison);
-      }
-
-      function renderFactChecklist(facts) {
-        if (!facts?.length) return "";
-        const items = facts.map((fact) => {
-          const mark = fact.found ? "✓" : "✗";
-          const label = fact.value || fact.key || "—";
-          return `<li class="${fact.found ? "fact-ok" : "fact-miss"}">${mark} ${escapeHtml(label)}</li>`;
-        }).join("");
-        return `<ul class="fact-checklist">${items}</ul>`;
-      }
-
-      function renderLegacyBanner(data) {
-        if (!data.legacy_session) {
-          legacyBanner.className = "legacy-banner hidden";
-          legacyBanner.textContent = "";
-          return;
-        }
-        legacyBanner.className = "legacy-banner";
-        legacyBanner.textContent = data.legacy_hint || "Старая сессия в cookie. Нажмите «Очистить».";
-      }
-
-      function renderComparePayloadPreview(without, withTrack) {
-        const payloads = {
-          without_compression_recall: without?.payload_preview || [],
-          with_compression_recall: withTrack?.payload_preview || [],
-        };
-        if (!payloads.without_compression_recall.length && !payloads.with_compression_recall.length) {
-          payloadPreview.textContent = "—";
-          return;
-        }
-        payloadPreview.textContent = JSON.stringify(payloads, null, 2);
-      }
-
-      function buildLiveDemoShowcase(data) {
-        const turn = data.current_turn || {};
-        const meta = turn.history_meta || {};
-        const cumulative = data.cumulative || {};
-        const judge = data.judge || turn.judge || {};
-        const before = Number(turn.prompt_tokens_full_estimated || 0);
-        const after = Number(turn.prompt_tokens_estimated || 0);
-        const savedPct = before > 0 ? Math.max(0, ((before - after) / before) * 100).toFixed(1) : "0.0";
-        const summaryChars = (data.history_summary || "").length;
-
-        return `
-          <header class="viz-header">
-            <p class="eyebrow">Live demo · текущий чат</p>
-            <h2 class="viz-headline">
-              ${formatNumber(before)}
-              <span class="viz-arrow">→</span>
-              ${formatNumber(after)}
-              <span class="viz-unit">tok</span>
-            </h2>
-            <p class="viz-subhead">Финальный recall prompt: <strong>−${savedPct}%</strong></p>
-          </header>
-
-          <div class="viz-bars">
-            ${buildBarRow({
-              label: "Без сжатия — counterfactual full prompt",
-              tokens: before,
-              width_pct: 100,
-              tone: "bad",
-              detail: `${formatNumber(meta.messages_total)} сообщений · ≈${formatNumber(before)} tok`,
-            })}
-            ${buildBarRow({
-              label: "Со сжатием — реально отправлено",
-              tokens: after,
-              width_pct: before > 0 ? Math.max(4, Math.round(after / before * 1000) / 10) : 4,
-              tone: "good",
-              detail: `${formatNumber(meta.messages_sent)} сообщ. + ${formatNumber(summaryChars)} симв. summary · ≈${formatNumber(after)} tok`,
-            })}
-          </div>
-
-          <table class="viz-table">
-            <tbody>
-              <tr>
-                <th scope="row">Сообщений в prompt</th>
-                <td>${formatNumber(meta.messages_total)}</td>
-                <td>${formatNumber(meta.messages_sent)}</td>
-                <td class="viz-saved">−${meta.messages_total ? Math.round((meta.messages_total - meta.messages_sent) / meta.messages_total * 1000) / 10 : 0}%</td>
-              </tr>
-              <tr>
-                <th scope="row">Обновлений summary</th>
-                <td colspan="3">${formatNumber(data.compression?.updates?.length || 0)}</td>
-              </tr>
-              <tr>
-                <th scope="row">Net за диалог</th>
-                <td colspan="3" class="${Number(cumulative.tokens_net_saved || 0) >= 0 ? "token-positive" : "token-negative"}">${formatNumber(cumulative.tokens_net_saved)} tok</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div class="compare-grid viz-answers">
-            <article class="compare-card">
-              <h4>Recall answer</h4>
-              ${renderFactChecklist(judge.facts)}
-              <p class="compare-answer">${escapeHtml(data.reply || "—")}</p>
-            </article>
-            <article class="compare-card">
-              <h4>Summary в system prompt</h4>
-              <pre class="summary-snippet">${escapeHtml(data.history_summary || "—")}</pre>
-            </article>
-          </div>`;
-      }
-
-      function renderLiveDemoResult(data) {
-        compareShowcase.className = "compare-showcase panel";
-        compareShowcase.innerHTML = buildLiveDemoShowcase(data);
-        const cumulative = data.cumulative || {};
-        const turn = data.current_turn || {};
-        comparePanel.innerHTML = `
-          <p class="meta-line">Net за весь чат: <strong class="${Number(cumulative.tokens_net_saved || 0) >= 0 ? "token-positive" : "token-negative"}">${formatNumber(cumulative.tokens_net_saved)} tok</strong></p>
-          <p class="meta-line">Финальный prompt: ${formatNumber(turn.prompt_tokens_full_estimated)} → ${formatNumber(turn.prompt_tokens_estimated)} tok</p>`;
-      }
-
-      function renderCompare(comparison, options = {}) {
-        const { scroll = false, persist = false } = options;
-
-        if (!comparison) {
-          comparePanel.innerHTML = '<p class="empty-state">Нажмите «Продолжить демо», затем «A/B текущий чат».</p>';
-          clearCompareShowcase();
-          payloadPreview.textContent = "—";
-          return;
-        }
-
-        const without = pickCompareTrack(comparison, false);
-        const withTrack = pickCompareTrack(comparison, true);
-        if (!without || !withTrack) {
-          comparePanel.innerHTML = '<p class="empty-state">Не удалось разобрать ответ сервера.</p>';
-          clearCompareShowcase();
-          payloadPreview.textContent = "—";
-          try {
-            sessionStorage.removeItem(COMPARE_STORAGE_KEY);
-          } catch (storageError) {
-            console.warn("compare results not cleared", storageError);
-          }
-          return;
-        }
-
-        compareShowcase.className = "compare-showcase panel";
-        compareShowcase.innerHTML = buildVisualShowcase(comparison);
-        comparePanel.innerHTML = buildCompareSidebar(comparison);
-        renderComparePayloadPreview(without, withTrack);
-
-        if (persist) {
-          try {
-            sessionStorage.setItem(COMPARE_STORAGE_KEY, JSON.stringify(comparison));
-          } catch (storageError) {
-            console.warn("compare results not saved", storageError);
-          }
-        }
-
-        if (scroll) {
-          compareShowcase.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }
-
-      function loadStoredCompare() {
-        try {
-          const raw = sessionStorage.getItem(COMPARE_STORAGE_KEY);
-          if (!raw) return;
-          renderCompare(JSON.parse(raw));
-        } catch (storageError) {
-          console.warn("compare results not loaded", storageError);
-          try {
-            sessionStorage.removeItem(COMPARE_STORAGE_KEY);
-          } catch (removeError) {
-            console.warn("compare results not cleared", removeError);
-          }
-        }
-      }
-
-      function renderNetSavings(data) {
-        const turn = data.current_turn || data.last_turn;
-        const cumulative = data.cumulative || {};
-        renderDefinitionList(netSavingsBox, [
-          ["За этот обмен", formatNumber(turn?.tokens_net_saved)],
-          ["За весь диалог", formatNumber(cumulative.tokens_net_saved)],
-          ["Потрачено на сжатие", formatNumber(cumulative.summarization_tokens_estimated)],
-        ]);
-      }
-
-      function renderCumulative(data) {
-        const c = data.cumulative || {};
-        renderDefinitionList(cumulativeBox, [
-          ["Запросы (оценка)", formatNumber(c.prompt_tokens_estimated)],
-          ["Запросы без сжатия (оценка)", formatNumber(c.prompt_tokens_full_estimated)],
-          ["Сжатие резюме (оценка)", formatNumber(c.summarization_tokens_estimated)],
-          ["Ответы (оценка)", formatNumber(c.response_tokens_estimated)],
-          ["Всего (оценка)", formatNumber(c.total_tokens_estimated)],
-          ["Стоимость (факт)", formatCost(c.cost_actual)],
-        ]);
-      }
-
-      function renderTurnTable(turns) {
-        if (!turns?.length) {
-          turnTableBody.innerHTML = '<tr><td colspan="6" class="empty-state">Нет ходов</td></tr>';
-          return;
-        }
-        turnTableBody.replaceChildren(...turns.map((turn) => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${turn.turn}</td>
-            <td>${turn.compression_enabled ? "да" : "нет"}</td>
-            <td>${formatNumber(turn.history_tokens_full)}</td>
-            <td>${formatNumber(turn.history_tokens_sent)}</td>
-            <td>${formatNumber(turn.prompt_tokens_estimated)}</td>
-            <td>${formatNumber(turn.tokens_net_saved)}</td>`;
-          return row;
-        }));
-      }
-
-      function renderConfig(data) {
-        const cfg = data.compression_config || {};
-        renderDefinitionList(configBox, [
-          ["Модель", data.model || "—"],
-          ["Счётчик токенов", data.tokenizer || "—"],
-          ["Хранить последние сообщений", String(cfg.keep_recent ?? "—")],
-          ["Сжимать каждые N сообщений", String(cfg.compress_every ?? "—")],
-        ]);
-      }
-
-      function renderPayload(data) {
-        if (!data.payload_preview?.length) {
-          payloadPreview.textContent = "—";
-          return;
-        }
-        payloadPreview.textContent = JSON.stringify(data.payload_preview, null, 2);
       }
 
       function renderState(data) {
-        renderLegacyBanner(data);
-        renderMessages(data.messages);
-        renderTokenTriple(data);
-        renderSummary(data);
-        renderNetSavings(data);
-        renderCumulative(data);
-        renderTurnTable(data.turns);
-        renderConfig(data);
-        renderPayload(data);
-        if (data.compression) {
-          compressionToggle.checked = Boolean(data.compression.enabled);
-        }
-        if (data.metadata && !data.legacy_session) {
-          metadataBox.textContent = JSON.stringify(data.metadata, null, 2);
-        } else if (data.legacy_session) {
-          metadataBox.textContent = "Служебные поля старой сессии скрыты. Очистите чат.";
-        }
+        renderMessages(data.messages || []);
+        renderMemory(data);
+        renderDemoProgress(data);
+      }
+
+      function renderDemoProgress(data) {
+        const progress = data.demo_progress ?? 0;
+        const total = data.demo_total ?? 25;
+        demoComplete = Boolean(data.demo_complete || progress >= total);
+        demoButton.textContent = demoComplete
+          ? `Сценарий завершён (${total}/${total})`
+          : `Тестовый сценарий ${progress}/${total}`;
+        demoButton.disabled = demoComplete;
+      }
+
+      function renderMetadata(data) {
+        const meta = data.metadata || {};
+        const items = [];
+        if (meta.model) items.push(`model: ${meta.model}`);
+        if (meta.duration_ms !== null && meta.duration_ms !== undefined) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
+        if (meta.total_tokens !== null && meta.total_tokens !== undefined) items.push(`tokens: ${meta.total_tokens}`);
+        if (meta.cost !== null && meta.cost !== undefined) items.push(`cost: $${Number(meta.cost).toFixed(6)}`);
+        if (data.memory_update_error) items.push(`memory update warning: ${data.memory_update_error}`);
+        metadataBox.textContent = items.length ? items.join(" · ") : "Метаданные недоступны.";
       }
 
       async function loadState() {
-        const response = await fetch("/api/chat");
-        const data = await response.json();
-        renderState(data);
+        setStatus("Загрузка...", "loading");
+        try {
+          const response = await fetch("/api/chat");
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Load failed");
+          renderState(data);
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        }
       }
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const message = messageInput.value.trim();
-        if (!message) return;
+        if (!message) {
+          form.reportValidity();
+          return;
+        }
+
         setBusy(true);
-        setStatus("Отправка…", "busy");
-        showAlert("");
+        setStatus("Запрос...", "loading");
+        metadataBox.textContent = "Ждем ответ OpenRouter и обновление памяти...";
+
         try {
           const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              message,
-              compression: compressionToggle.checked,
-            }),
+            body: JSON.stringify({ message }),
           });
           const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Не удалось отправить сообщение");
+          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Unknown error"}`);
           messageInput.value = "";
           renderState(data);
-          setStatus("Готово", "ok");
+          renderMetadata(data);
+          setStatus("Готово");
         } catch (error) {
-          showAlert(error.message, "error");
           setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+          messageInput.focus();
+        }
+      });
+
+      newButton.addEventListener("click", async () => {
+        setBusy(true);
+        setStatus("Архивация...", "loading");
+        try {
+          const response = await fetch("/api/chat/new", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "New chat failed");
+          renderState(data);
+          metadataBox.textContent = "Текущий чат архивирован.";
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
         } finally {
           setBusy(false);
         }
       });
 
-      compareButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("Продолжаем демо…", "busy");
-        showAlert("Сценарий добавится в текущий чат. История не очищается, summary продолжит сжимать старые сообщения batch по 10.", "warn");
-        try {
-          sessionStorage.removeItem(COMPARE_STORAGE_KEY);
-          compressionToggle.checked = true;
-
-          const scriptResponse = await fetch("/api/demo/compression-script");
-          const script = await scriptResponse.json();
-          if (!scriptResponse.ok) throw new Error(script.error || "Не удалось загрузить сценарий");
-
-          let lastData = null;
-          for (const step of script.steps || []) {
-            const stepNumber = step.index + 1;
-            setStatus(`Шаг ${stepNumber}/${script.total_steps}`, "busy");
-            comparePanel.innerHTML = `<p class="meta-line">Шаг ${stepNumber}/${script.total_steps}: сообщение отправляется в чат…</p>`;
-            renderPendingUserMessage(step.message);
-
-            const response = await fetch("/api/demo/compression-step", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ step_index: step.index }),
-            });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || "Шаг демо не удался");
-            lastData = data;
-            renderState(data);
-            comparePanel.innerHTML = `<p class="meta-line">Шаг ${stepNumber}/${script.total_steps}: UI обновлён. Summary updates: ${formatNumber(data.compression?.updates?.length || 0)}</p>`;
-            await sleep(80);
-          }
-
-          if (lastData) {
-            renderLiveDemoResult(lastData);
-            showAlert("Видимый прогон готов: сообщения прошли через чат, summary и токены обновлялись по шагам.", "ok");
-          }
-          setStatus("Демо готово", "ok");
-        } catch (error) {
-          showAlert(error.message, "error");
-          setStatus("Ошибка", "error");
-        } finally {
-          setBusy(false);
+      archivedMemory.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-chat-id]");
+        if (!button) {
+          return;
         }
-      });
 
-      currentCompareButton.addEventListener("click", async () => {
         setBusy(true);
-        setStatus("A/B по текущей истории…", "busy");
-        showAlert("Сравнение делает 2 live-запроса к модели и при необходимости merge summary. Чат не очищается, recall не добавляется в сообщения.", "warn");
+        setStatus("Возврат...", "loading");
         try {
-          sessionStorage.removeItem(COMPARE_STORAGE_KEY);
-          compressionToggle.checked = true;
-
-          const response = await fetch("/api/demo/current-comparison", {
+          const response = await fetch("/api/chat/resume", {
             method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: button.dataset.chatId }),
           });
           const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Сравнение текущей истории не удалось");
-
-          if (data.state) {
-            renderState(data.state);
-          }
-          renderCompare(data.comparison, { scroll: true, persist: true });
-          showAlert("A/B готов: сравнили текущую историю без очистки и без скрытого добавления сообщений в чат.", "ok");
-          setStatus("A/B готово", "ok");
+          if (!response.ok) throw new Error(data.error || "Resume chat failed");
+          renderState(data);
+          metadataBox.textContent = "Старый чат восстановлен. Можно продолжать диалог.";
+          setStatus("Готово");
         } catch (error) {
-          showAlert(error.message, "error");
           setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      demoButton.addEventListener("click", async () => {
+        if (demoComplete) {
+          return;
+        }
+
+        setBusy(true);
+        setStatus("Сценарий...", "loading");
+        metadataBox.textContent = "Отправляем следующее тестовое сообщение...";
+
+        try {
+          const response = await fetch("/api/demo/next", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Demo step failed"}`);
+          renderState(data);
+          renderMetadata(data);
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
         } finally {
           setBusy(false);
         }
@@ -767,21 +331,23 @@
 
       clearButton.addEventListener("click", async () => {
         setBusy(true);
+        setStatus("Очистка...", "loading");
         try {
-          await fetch("/api/chat", { method: "DELETE" });
-          sessionStorage.removeItem(COMPARE_STORAGE_KEY);
-          renderCompare(null);
-          showAlert("");
-          await loadState();
-          setStatus("Очищено", "ok");
+          const response = await fetch("/api/chat", { method: "DELETE" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Clear failed");
+          renderState(data);
+          metadataBox.textContent = "Память этого клиента очищена.";
+          setStatus("Готово");
+        } catch (error) {
+          setStatus("Ошибка", "error");
+          metadataBox.textContent = error.message;
         } finally {
           setBusy(false);
         }
       });
 
-      loadState()
-        .then(() => loadStoredCompare())
-        .catch((error) => showAlert(error.message, "error"));
+      loadState();
     </script>
   </body>
 </html>

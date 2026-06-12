@@ -4,10 +4,8 @@ import unittest
 
 try:
     from .agent import ChatAgent, FileMemoryStore
-    from .context_compression import SUMMARY_MARKER
 except ImportError:
     from agent import ChatAgent, FileMemoryStore
-    from context_compression import SUMMARY_MARKER
 
 
 CLIENT_ID = "11111111-1111-1111-1111-111111111111"
@@ -19,9 +17,15 @@ class FakeLLM:
 
     def __call__(self, messages, **options):
         self.calls.append(messages)
-        system = messages[0]["content"] if messages else ""
-        if "compress chat history" in system:
-            return {"content": "Compressed summary of prior chat."}
+        if messages[0]["content"].startswith("You update long-term memory"):
+            return {
+                "content": json.dumps({
+                    "style": "",
+                    "facts": ["user name is Nikita"],
+                    "inferences": [],
+                    "current_chat_summary": "The user introduced himself as Nikita.",
+                })
+            }
         return {"content": "Запомнил."}
 
 
@@ -62,21 +66,6 @@ class AgentPersistenceTest(unittest.TestCase):
                 restored_prompt[-1],
                 {"role": "user", "content": "Как меня зовут?"},
             )
-
-    def test_compression_state_survives_restart(self):
-        with tempfile.TemporaryDirectory() as data_dir:
-            store = FileMemoryStore(data_dir)
-            agent = ChatAgent(store, FakeLLM())
-            for index in range(12):
-                agent.respond(CLIENT_ID, f"msg {index}", compression=True)
-
-            saved = store.load(CLIENT_ID)
-            self.assertGreater(saved["compression"]["summarized_through"], 0)
-
-            restarted = ChatAgent(store, FakeLLM())
-            snapshot = restarted.snapshot(CLIENT_ID)
-            self.assertEqual(snapshot["compression"]["summarized_through"], saved["compression"]["summarized_through"])
-            self.assertEqual(snapshot["history_summary"], saved["history_summary"])
 
     def test_archived_chat_can_be_resumed_and_continued(self):
         with tempfile.TemporaryDirectory() as data_dir:
@@ -124,26 +113,6 @@ class AgentPersistenceTest(unittest.TestCase):
                 {"role": "user", "content": "Чат Б: люблю Flask."},
                 resumed_prompt,
             )
-
-    def test_resume_does_not_inject_archive_summary_into_prompt(self):
-        with tempfile.TemporaryDirectory() as data_dir:
-            store = FileMemoryStore(data_dir)
-            agent = ChatAgent(store, FakeLLM())
-            agent.respond(CLIENT_ID, "Чат А: люблю Python.")
-            state = agent.start_new_chat(CLIENT_ID)
-            old_chat_id = state["archived_chats"][0]["id"]
-            agent.respond(CLIENT_ID, "Чат Б: люблю Flask.")
-
-            restarted_agent = ChatAgent(store, FakeLLM())
-            restarted_agent.resume_chat(CLIENT_ID, old_chat_id)
-            snapshot = restarted_agent.snapshot(CLIENT_ID)
-            self.assertEqual(snapshot["history_summary"], "")
-
-            llm = FakeLLM()
-            restarted_agent = ChatAgent(store, llm)
-            restarted_agent.respond(CLIENT_ID, "Продолжим чат А.", compression=True)
-            system_prompt = llm.calls[0][0]["content"]
-            self.assertNotIn(SUMMARY_MARKER, system_prompt)
 
 
 if __name__ == "__main__":

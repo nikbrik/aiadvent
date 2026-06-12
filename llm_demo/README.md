@@ -2,60 +2,89 @@
 
 Учебное демо для AI Advent: браузер отправляет сообщение в Python backend, backend-агент делает явный REST POST через `httpx` к OpenRouter.
 
-Текущий снапшот реализует **День 9**: сжатие истории диалога, token accounting и A/B сравнение качества.
+Текущий снапшот реализует День 7: агент сохраняет контекст и восстанавливает диалог после перезапуска.
 
 ## Что внутри
 
-- `server.py` — Flask routes `/`, `/api/chat`, `/api/demo/compression-step`, `/api/demo/current-comparison`, `/api/demo/compression-compare`.
-- `agent.py` — `ChatAgent` с batch compression, per-turn token stats, visible demo steps, compare demo.
-- `context_compression.py` — merge-summary, выбор messages для prompt.
-- `quality_judge.py` — LLM-judge для compare demo.
-- `token_counter.py` — локальная оценка токенов без сети.
-- `llm_client.py` — REST-запрос к OpenRouter через `httpx.post`.
-- `static/index.html` — vanilla HTML/JS chat UI.
-- `static/style.css` — адаптивные стили.
+- `server.py` - Flask routes `/`, `/api/chat`, `/api/chat/new`.
+- `agent.py` - `ChatAgent` и file-based memory store.
+- `llm_client.py` - низкоуровневый REST-запрос к OpenRouter через `httpx.post`.
+- `static/index.html` - vanilla HTML/JS chat UI.
+- `static/style.css` - адаптивные стили для desktop и Android Chrome.
 
 Спецификации и агентские заметки вынесены в `../docs/`.
 
-## День 9
+## День 7
 
-Агент хранит полную историю в JSON для UI. В OpenRouter prompt при включённом сжатии:
+Backend ставит `client_id` cookie и хранит память в `data/clients/<client_id>.json`.
 
-1. старые сообщения (батчами по 10) сворачиваются в `history_summary` через отдельный LLM-вызов;
-2. в prompt попадают summary block в system + последние **6** сообщений + новый user message;
-3. UI показывает tokens full vs sent, net savings, payload preview.
+Agent сохраняет:
 
-Кнопка **Продолжить демо** добавляет 56 scripted turns в текущий чат по шагам, без очистки истории: стартовые факты, 54 разные учебные реплики и recall. Кнопка **A/B текущий чат** сравнивает recall по накопленной истории: без сжатия отправляется вся история, со сжатием — `history_summary` + хвост сообщений. Ephemeral `/api/demo/compression-compare` оставлен как no-session A/B endpoint.
+- текущие сообщения чата;
+- summary текущего чата;
+- summaries прошлых чатов;
+- messages прошлых чатов для ручного возврата к ним;
+- факты о пользователе;
+- выводы/persona notes о пользователе;
+- preferred communication style.
 
-По умолчанию модель **`deepseek/deepseek-v4-flash`**.
+При каждом запросе agent заново загружает JSON с диска. Поэтому после перезапуска Flask тот же браузер с тем же `client_id` cookie видит старые `messages`, а следующий OpenRouter call получает их в prompt.
+
+Если пользователь возвращается к старому чату, выбранный архив становится `current_chat`, и его `messages` снова попадают в prompt. Остальные архивы остаются только summary-контекстом; полные transcripts других чатов в prompt не добавляются.
+
+Перед основным OpenRouter call agent вставляет память в system prompt. После ответа agent делает второй LLM call, чтобы обновить facts, inferences, style и current summary. Если memory-update JSON сломан, видимый ответ все равно возвращается.
+
+Все agent calls используют OpenRouter model `deepseek/deepseek-v4-flash`.
+
+Жёлтая кнопка `Тестовый сценарий` пошагово отправляет 25 scripted messages от вымышленного Android-разработчика Аркадия Чернова. Сценарий автоматически разбивает сообщения на пять чатов и показывает, как память переносится между темами.
+
+## API
+
+| Method | Path | Описание |
+| --- | --- | --- |
+| `GET` | `/api/chat` | Вернуть текущий чат и память клиента |
+| `POST` | `/api/chat` | Принять `{ "message": "..." }`, вернуть ответ агента |
+| `POST` | `/api/chat/new` | Архивировать текущий чат и начать новый |
+| `POST` | `/api/chat/resume` | Принять `{ "chat_id": "..." }`, восстановить архивный чат как текущий |
+| `DELETE` | `/api/chat` | Очистить память текущего клиента |
+| `POST` | `/api/demo/next` | Отправить следующий scripted demo message |
 
 ## Запуск
 
 ```bash
 cd llm_demo
-cp .env.example .env
-# OPENROUTER_API_KEY=...
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export OPENROUTER_API_KEY="sk-or-..."
 python server.py
 ```
 
-Откройте `http://127.0.0.1:5000/`.
+По умолчанию сервер слушает `0.0.0.0:5000`.
 
-## Тесты (без сети)
+Откройте:
 
-```bash
-python -m unittest llm_demo.test_context_compression llm_demo.test_agent_persistence
-python -m py_compile llm_demo/server.py llm_demo/llm_client.py llm_demo/agent.py llm_demo/token_counter.py llm_demo/context_compression.py llm_demo/quality_judge.py
+```text
+http://localhost:5000
 ```
 
 ## Переменные окружения
 
-- `OPENROUTER_API_KEY` — ключ OpenRouter (только backend).
-- `OPENROUTER_MODEL` — default `deepseek/deepseek-v4-flash`.
-- `CONTEXT_KEEP_RECENT_MESSAGES` — default `6`.
-- `CONTEXT_COMPRESS_EVERY` — default `10`.
-- `CONTEXT_COMPRESSION_ENABLED` — default `true`.
-- `MAX_SUMMARY_CHARS` — default `900`.
-- `MAX_STORED_MESSAGES`, `MAX_STORED_TURNS` — default `2000`.
-- `PROMPT_PRICE_PER_1M_TOKENS`, `COMPLETION_PRICE_PER_1M_TOKENS` — optional cost estimate.
+| Переменная | Описание |
+| --- | --- |
+| `OPENROUTER_API_KEY` | Обязательный API-ключ OpenRouter |
+| `OPENROUTER_MODEL` | Модель OpenRouter, default `z-ai/glm-4.7-flash` |
+| `HOST` | Host Flask, default `0.0.0.0` |
+| `PORT` | Port Flask, default `5000` |
 
-Compare demo и длинный ручной чат расходуют баланс OpenRouter — запускайте только с разрешения.
+## Checks
+
+```bash
+python -m py_compile server.py llm_client.py agent.py
+python -m unittest test_agent_persistence
+git diff --check
+```
+
+## Ограничения
+
+В демо нет auth, rate limit, streaming и native Android app. API-ключ хранится только на backend и не передается в frontend.
