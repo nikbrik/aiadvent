@@ -2,52 +2,52 @@
 
 Учебное демо для AI Advent: браузер отправляет сообщение в Python backend, backend-агент делает явный REST POST через `httpx` к OpenRouter.
 
-Текущий снапшот реализует День 7: агент сохраняет контекст и восстанавливает диалог после перезапуска.
+Текущий снапшот реализует День 10: переключатель 7 изолированных стратегий управления контекстом и наглядный demo-runner для сравнения.
 
 ## Что внутри
 
-- `server.py` - Flask routes `/`, `/api/chat`, `/api/chat/new`.
-- `agent.py` - `ChatAgent` и file-based memory store.
+- `server.py` - Flask routes `/`, `/api/chat`, `/api/context/*`, `/api/demo/*`.
+- `agent.py` - `ChatAgent`, file-based memory store, prompt builders для 7 стратегий.
+- `demo_script.py` - 12-step сценарий сбора ТЗ с checkpoint и двумя ветками.
 - `llm_client.py` - низкоуровневый REST-запрос к OpenRouter через `httpx.post`.
-- `static/index.html` - vanilla HTML/JS chat UI.
+- `static/index.html` - vanilla HTML/JS demo cockpit.
 - `static/style.css` - адаптивные стили для desktop и Android Chrome.
 
 Спецификации и агентские заметки вынесены в `../docs/`.
 
-## День 7
+## День 10
 
-Backend ставит `client_id` cookie и хранит память в `data/clients/<client_id>.json`.
+Доступные стратегии:
 
-Agent сохраняет:
+- `Sliding Window` - только последние N сообщений.
+- `Sticky Facts / Key-Value Memory` - key-value facts + последние сообщения.
+- `Branching` - checkpoint, две независимые ветки, переключение веток.
+- `Profile Memory + History Summaries` - профильная память, inferences, текущий summary, summaries архивов.
+- `Tokenization and Cut` - обрезка истории по estimated token budget.
+- `Context Leveling` - уровни goal/audience/constraints/decisions/open questions/recent focus.
+- `Conversation Recreation` - чистый prompt из structured state + текущий запрос.
 
-- текущие сообщения чата;
-- summary текущего чата;
-- summaries прошлых чатов;
-- messages прошлых чатов для ручного возврата к ним;
-- факты о пользователе;
-- выводы/persona notes о пользователе;
-- preferred communication style.
+UI позволяет переключать стратегию, пошагово запускать сценарий, запускать текущую стратегию целиком или прогонять все стратегии. После `Run all` таблица сравнивает финальный ответ, сохраненные/потерянные детали, estimated/actual tokens, cost/time и UX score.
 
-При каждом запросе agent заново загружает JSON с диска. Поэтому после перезапуска Flask тот же браузер с тем же `client_id` cookie видит старые `messages`, а следующий OpenRouter call получает их в prompt.
-
-Если пользователь возвращается к старому чату, выбранный архив становится `current_chat`, и его `messages` снова попадают в prompt. Остальные архивы остаются только summary-контекстом; полные transcripts других чатов в prompt не добавляются.
-
-Перед основным OpenRouter call agent вставляет память в system prompt. После ответа agent делает второй LLM call, чтобы обновить facts, inferences, style и current summary. Если memory-update JSON сломан, видимый ответ все равно возвращается.
-
-Все agent calls используют OpenRouter model `deepseek/deepseek-v4-flash`.
-
-Жёлтая кнопка `Тестовый сценарий` пошагово отправляет 25 scripted messages от вымышленного Android-разработчика Аркадия Чернова. Сценарий автоматически разбивает сообщения на пять чатов и показывает, как память переносится между темами.
+`Run all` делает много OpenRouter calls. Для проверок без расхода ключа используйте unit tests с fake LLM.
 
 ## API
 
 | Method | Path | Описание |
 | --- | --- | --- |
-| `GET` | `/api/chat` | Вернуть текущий чат и память клиента |
+| `GET` | `/api/chat` | Вернуть активную стратегию, transcript, state, prompt report и comparison |
 | `POST` | `/api/chat` | Принять `{ "message": "..." }`, вернуть ответ агента |
-| `POST` | `/api/chat/new` | Архивировать текущий чат и начать новый |
-| `POST` | `/api/chat/resume` | Принять `{ "chat_id": "..." }`, восстановить архивный чат как текущий |
+| `POST` | `/api/chat/new` | Начать новый чат для активной стратегии |
+| `POST` | `/api/chat/resume` | Принять `{ "chat_id": "..." }`, восстановить архивный чат |
 | `DELETE` | `/api/chat` | Очистить память текущего клиента |
+| `POST` | `/api/context/strategy` | Принять `{ "strategy": "..." }`, переключить стратегию |
+| `POST` | `/api/context/checkpoint` | Сохранить checkpoint для branching |
+| `POST` | `/api/context/branches` | Создать `branch_a` и `branch_b` |
+| `POST` | `/api/context/branch` | Принять `{ "branch_id": "..." }`, переключить ветку |
+| `POST` | `/api/demo/reset` | Сбросить demo state |
 | `POST` | `/api/demo/next` | Отправить следующий scripted demo message |
+| `POST` | `/api/demo/run-active` | Прогнать весь сценарий на активной стратегии |
+| `POST` | `/api/demo/run-all` | Прогнать весь сценарий на всех 7 стратегиях |
 
 ## Запуск
 

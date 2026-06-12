@@ -3,9 +3,11 @@ import tempfile
 import unittest
 
 try:
-    from .agent import ChatAgent, FileMemoryStore
+    from .agent import ChatAgent, FileMemoryStore, STRATEGY_IDS, comparison_result_for
+    from .demo_script import DEMO_BRANCH_CREATE_STEP, DEMO_BRANCH_SWITCHES, DEMO_MESSAGES
 except ImportError:
-    from agent import ChatAgent, FileMemoryStore
+    from agent import ChatAgent, FileMemoryStore, STRATEGY_IDS, comparison_result_for
+    from demo_script import DEMO_BRANCH_CREATE_STEP, DEMO_BRANCH_SWITCHES, DEMO_MESSAGES
 
 
 CLIENT_ID = "11111111-1111-1111-1111-111111111111"
@@ -27,6 +29,10 @@ class FakeLLM:
                 })
             }
         return {"content": "Запомнил."}
+
+
+def prompt_text(messages):
+    return "\n".join(item["content"] for item in messages)
 
 
 class AgentPersistenceTest(unittest.TestCase):
@@ -113,6 +119,158 @@ class AgentPersistenceTest(unittest.TestCase):
                 {"role": "user", "content": "Чат Б: люблю Flask."},
                 resumed_prompt,
             )
+
+
+class ContextStrategyTest(unittest.TestCase):
+    def test_strategies_do_not_share_prompt_blocks(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+
+            agent.set_strategy(CLIENT_ID, "sliding_window")
+            agent.respond(CLIENT_ID, "SLIDING_ONLY ранний контекст.")
+
+            agent.set_strategy(CLIENT_ID, "sticky_facts")
+            agent.respond(CLIENT_ID, "Цель продукта: семейный задачник.")
+            sticky_prompt = prompt_text(llm.calls[-1])
+
+            self.assertIn("Sticky facts JSON", sticky_prompt)
+            self.assertIn("семейный задачник", sticky_prompt)
+            self.assertNotIn("SLIDING_ONLY", sticky_prompt)
+
+    def test_sliding_window_drops_early_messages(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            agent.set_strategy(CLIENT_ID, "sliding_window")
+
+            for index in range(4):
+                agent.respond(CLIENT_ID, f"Сообщение {index} EARLY_DETAIL")
+            agent.respond(CLIENT_ID, "Финальный вопрос?")
+
+            final_prompt = prompt_text(llm.calls[-1])
+            self.assertNotIn("Сообщение 0 EARLY_DETAIL", final_prompt)
+            self.assertIn("Сообщение 3 EARLY_DETAIL", final_prompt)
+            self.assertLessEqual(len(agent.snapshot(CLIENT_ID)["messages"]), 4)
+
+    def test_sticky_facts_are_sent_with_recent_messages(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            agent.set_strategy(CLIENT_ID, "sticky_facts")
+
+            agent.respond(
+                CLIENT_ID,
+                "Критично: MVP нужен за 3 недели, приложение offline-first, без ML.",
+            )
+            agent.respond(CLIENT_ID, "Что ты помнишь?")
+            final_prompt = prompt_text(llm.calls[-1])
+
+            self.assertIn('"deadline": "MVP за 3 недели"', final_prompt)
+            self.assertIn('"offline_first": "работает offline-first"', final_prompt)
+            self.assertIn('"budget": "бюджет без ML и машинного обучения"', final_prompt)
+
+    def test_branching_isolates_branch_transcripts(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            agent.set_strategy(CLIENT_ID, "branching")
+
+            agent.respond(CLIENT_ID, "Общая база.")
+            agent.create_checkpoint(CLIENT_ID)
+            agent.create_branches(CLIENT_ID)
+            agent.switch_branch(CLIENT_ID, "branch_a")
+            agent.respond(CLIENT_ID, "A_ONLY быстрый MVP.")
+            agent.switch_branch(CLIENT_ID, "branch_b")
+            agent.respond(CLIENT_ID, "B_ONLY enterprise.")
+            agent.switch_branch(CLIENT_ID, "branch_a")
+            agent.respond(CLIENT_ID, "Проверь ветку A.")
+
+            final_prompt = prompt_text(llm.calls[-1])
+            self.assertIn("A_ONLY", final_prompt)
+            self.assertNotIn("B_ONLY", final_prompt)
+
+    def test_token_cut_uses_budget_instead_of_message_count(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            agent.set_strategy(CLIENT_ID, "token_cut")
+
+            agent.respond(CLIENT_ID, "EARLY_DETAIL " + ("очень длинный текст " * 120))
+            agent.respond(CLIENT_ID, "Короткий свежий контекст.")
+            agent.respond(CLIENT_ID, "Финальный вопрос?")
+
+            final_prompt = prompt_text(llm.calls[-1])
+            self.assertNotIn("EARLY_DETAIL", final_prompt)
+            self.assertIn("Короткий свежий контекст.", final_prompt)
+
+    def test_context_leveling_builds_structured_levels(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            agent.set_strategy(CLIENT_ID, "context_leveling")
+
+            agent.respond(CLIENT_ID, "Цель продукта: семейный задачник для родителей и детей 7-12.")
+            agent.respond(CLIENT_ID, "Финальный вопрос?")
+            final_prompt = prompt_text(llm.calls[-1])
+
+            self.assertIn("Context levels", final_prompt)
+            self.assertIn("семейный задачник", final_prompt)
+            self.assertIn("родители и дети", final_prompt)
+
+    def test_conversation_recreation_uses_state_without_raw_history(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            agent.set_strategy(CLIENT_ID, "conversation_recreation")
+
+            agent.respond(CLIENT_ID, "Цель продукта: семейный задачник.")
+            agent.respond(CLIENT_ID, "Промежуточный шум, который не должен быть raw history.")
+            agent.respond(CLIENT_ID, "Финальный вопрос?")
+            final_prompt = prompt_text(llm.calls[-1])
+
+            self.assertIn("Recreated conversation state", final_prompt)
+            self.assertIn("семейный задачник", final_prompt)
+            self.assertNotIn("Промежуточный шум, который не должен быть raw history.", final_prompt)
+            self.assertNotIn("Запомнил.", final_prompt)
+
+    def test_profile_memory_history_summaries_remains_available(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            llm = FakeLLM()
+            agent = ChatAgent(FileMemoryStore(data_dir), llm)
+            agent.set_strategy(CLIENT_ID, "profile_summaries")
+
+            agent.respond(CLIENT_ID, "Меня зовут Никита.")
+            agent.respond(CLIENT_ID, "Как меня зовут?")
+            final_prompt = prompt_text(llm.calls[-2])
+
+            self.assertIn("Profile Memory + History Summaries", final_prompt)
+            self.assertIn("The user introduced himself as Nikita.", final_prompt)
+
+    def test_same_demo_scenario_runs_for_all_strategies(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            agent = ChatAgent(FileMemoryStore(data_dir), FakeLLM())
+            results = []
+
+            for strategy_id in STRATEGY_IDS:
+                agent.set_strategy(CLIENT_ID, strategy_id)
+                agent.reset_strategy(CLIENT_ID, strategy_id)
+
+                for progress, message in enumerate(DEMO_MESSAGES):
+                    step_number = progress + 1
+                    if strategy_id == "branching" and step_number in DEMO_BRANCH_SWITCHES:
+                        agent.switch_branch(CLIENT_ID, DEMO_BRANCH_SWITCHES[step_number])
+
+                    agent.respond(CLIENT_ID, message)
+
+                    if strategy_id == "branching" and step_number == DEMO_BRANCH_CREATE_STEP:
+                        agent.create_checkpoint(CLIENT_ID)
+                        agent.create_branches(CLIENT_ID)
+
+                results.append(comparison_result_for(agent.snapshot(CLIENT_ID)))
+
+            self.assertEqual(len(results), 7)
+            self.assertEqual({item["strategy_id"] for item in results}, set(STRATEGY_IDS))
 
 
 if __name__ == "__main__":

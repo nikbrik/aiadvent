@@ -3,26 +3,36 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AI Advent Day 7 Context</title>
+    <title>AI Advent Day 10 Context Strategies</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">AI Advent · День 7</p>
-        <h1>Сохранение контекста</h1>
-        <p class="lead">
-          Чат-агент сохраняет messages в JSON и восстанавливает диалог после перезапуска.
-        </p>
+        <p class="eyebrow">AI Advent · День 10</p>
+        <h1>Стратегии контекста</h1>
+        <p class="lead">Один сценарий ТЗ прогоняется через семь изолированных стратегий.</p>
+      </section>
+
+      <section class="toolbar panel">
+        <div id="strategy-tabs" class="strategy-tabs"></div>
+        <div class="run-actions">
+          <button id="reset-demo" class="secondary-button" type="button">Reset demo</button>
+          <button id="next-step" class="primary-button" type="button">Next step</button>
+          <button id="run-active" class="demo-button" type="button">Run active</button>
+          <button id="run-all" class="demo-button" type="button">Run all</button>
+          <button id="stop-run" class="danger-button" type="button" disabled>Stop</button>
+        </div>
       </section>
 
       <section class="workspace">
         <section class="panel chat-panel">
           <div class="panel-head">
-            <h2>Чат</h2>
+            <h2 id="active-title">Чат</h2>
             <span id="status" class="status">Готово</span>
           </div>
 
+          <div id="timeline" class="timeline"></div>
           <div id="messages" class="messages" aria-live="polite"></div>
 
           <form id="chat-form" class="composer">
@@ -32,7 +42,6 @@
             </label>
             <div class="actions">
               <button id="send-button" class="primary-button" type="submit">Отправить</button>
-              <button id="demo-button" class="demo-button" type="button">Тестовый сценарий 0/25</button>
               <button id="new-button" class="secondary-button" type="button">Новый чат</button>
               <button id="clear-button" class="danger-button" type="button">Очистить память</button>
             </div>
@@ -41,36 +50,57 @@
           <div id="metadata" class="metadata">Метаданные появятся после ответа.</div>
         </section>
 
-        <aside class="panel memory-panel">
-          <div class="panel-head">
-            <h2>Память</h2>
-          </div>
-
-          <section class="memory-section">
-            <h3>Стиль</h3>
-            <p id="style-memory" class="memory-text">Пока нет данных.</p>
+        <aside class="side-stack">
+          <section class="panel inspector-panel">
+            <div class="panel-head">
+              <h2>Context sent to model</h2>
+            </div>
+            <div id="context-blocks" class="chips"></div>
+            <dl id="context-metrics" class="metric-grid"></dl>
+            <div class="detail-columns">
+              <section>
+                <h3>Kept</h3>
+                <ul id="kept-details" class="memory-list"></ul>
+              </section>
+              <section>
+                <h3>Lost</h3>
+                <ul id="lost-details" class="memory-list"></ul>
+              </section>
+            </div>
+            <h3>Prompt preview</h3>
+            <pre id="prompt-preview" class="prompt-preview">Пока нет prompt.</pre>
           </section>
 
-          <section class="memory-section">
-            <h3>Факты</h3>
-            <ul id="facts-memory" class="memory-list"></ul>
-          </section>
-
-          <section class="memory-section">
-            <h3>Выводы</h3>
-            <ul id="inferences-memory" class="memory-list"></ul>
-          </section>
-
-          <section class="memory-section">
-            <h3>Текущий summary</h3>
-            <p id="current-summary" class="memory-text">Пока нет данных.</p>
-          </section>
-
-          <section class="memory-section">
-            <h3>Прошлые чаты</h3>
-            <ul id="archived-memory" class="memory-list"></ul>
+          <section class="panel strategy-panel">
+            <div class="panel-head">
+              <h2>State</h2>
+            </div>
+            <div id="strategy-state" class="state-box"></div>
+            <div id="branch-controls" class="branch-controls"></div>
           </section>
         </aside>
+      </section>
+
+      <section class="panel comparison-panel">
+        <div class="panel-head">
+          <h2>Comparison</h2>
+          <span id="comparison-status" class="status">0 runs</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Score</th>
+                <th>Tokens</th>
+                <th>Cost/time</th>
+                <th>Lost details</th>
+                <th>Final answer</th>
+              </tr>
+            </thead>
+            <tbody id="comparison-body"></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
@@ -81,23 +111,39 @@
       const statusBox = document.querySelector("#status");
       const metadataBox = document.querySelector("#metadata");
       const sendButton = document.querySelector("#send-button");
-      const demoButton = document.querySelector("#demo-button");
       const newButton = document.querySelector("#new-button");
       const clearButton = document.querySelector("#clear-button");
-      const styleMemory = document.querySelector("#style-memory");
-      const factsMemory = document.querySelector("#facts-memory");
-      const inferencesMemory = document.querySelector("#inferences-memory");
-      const currentSummary = document.querySelector("#current-summary");
-      const archivedMemory = document.querySelector("#archived-memory");
-      let demoComplete = false;
+      const resetDemoButton = document.querySelector("#reset-demo");
+      const nextStepButton = document.querySelector("#next-step");
+      const runActiveButton = document.querySelector("#run-active");
+      const runAllButton = document.querySelector("#run-all");
+      const stopRunButton = document.querySelector("#stop-run");
+      const strategyTabs = document.querySelector("#strategy-tabs");
+      const activeTitle = document.querySelector("#active-title");
+      const timeline = document.querySelector("#timeline");
+      const contextBlocks = document.querySelector("#context-blocks");
+      const contextMetrics = document.querySelector("#context-metrics");
+      const keptDetails = document.querySelector("#kept-details");
+      const lostDetails = document.querySelector("#lost-details");
+      const promptPreview = document.querySelector("#prompt-preview");
+      const strategyState = document.querySelector("#strategy-state");
+      const branchControls = document.querySelector("#branch-controls");
+      const comparisonBody = document.querySelector("#comparison-body");
+      const comparisonStatus = document.querySelector("#comparison-status");
+
+      let abortController = null;
+      let latestState = null;
 
       function setBusy(isBusy) {
-        sendButton.disabled = isBusy;
-        demoButton.disabled = isBusy || demoComplete;
-        newButton.disabled = isBusy;
-        clearButton.disabled = isBusy;
+        [sendButton, newButton, clearButton, resetDemoButton, nextStepButton, runActiveButton, runAllButton].forEach((button) => {
+          button.disabled = isBusy;
+        });
+        stopRunButton.disabled = !isBusy;
         messageInput.disabled = isBusy;
-        archivedMemory.querySelectorAll("button").forEach((button) => {
+        strategyTabs.querySelectorAll("button").forEach((button) => {
+          button.disabled = isBusy;
+        });
+        branchControls.querySelectorAll("button").forEach((button) => {
           button.disabled = isBusy;
         });
       }
@@ -107,12 +153,65 @@
         statusBox.className = mode ? `status ${mode}` : "status";
       }
 
+      async function requestJson(url, options = {}) {
+        const response = await fetch(url, {
+          ...options,
+          signal: abortController ? abortController.signal : undefined,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(`${data.status || response.status}: ${data.error || "Unknown error"}`);
+        }
+        return data;
+      }
+
+      function renderState(data) {
+        latestState = data;
+        renderStrategies(data);
+        renderTimeline(data);
+        renderMessages(data.messages || []);
+        renderContext(data.context_report || {});
+        renderStrategyState(data);
+        renderComparison(data.comparison_results || []);
+        renderDemoButtons(data);
+      }
+
+      function renderStrategies(data) {
+        const strategies = data.strategies || [];
+        strategyTabs.replaceChildren(...strategies.map((strategy) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = strategy.active ? "strategy-tab active" : "strategy-tab";
+          button.dataset.strategy = strategy.id;
+          button.textContent = strategy.short_name || strategy.name;
+          button.title = strategy.description || strategy.name;
+          return button;
+        }));
+        const active = strategies.find((item) => item.active);
+        activeTitle.textContent = active ? active.name : "Чат";
+      }
+
+      function renderTimeline(data) {
+        const progress = data.demo_progress || 0;
+        const items = data.demo_timeline || [];
+        timeline.replaceChildren(...items.map((item) => {
+          const node = document.createElement("button");
+          node.type = "button";
+          node.className = "timeline-step";
+          if (item.step <= progress) node.classList.add("done");
+          if (item.step === progress + 1) node.classList.add("next");
+          if (item.marker) node.classList.add(item.marker);
+          node.title = item.message;
+          node.textContent = item.step;
+          return node;
+        }));
+      }
+
       function renderMessages(messages) {
-        if (!messages || messages.length === 0) {
+        if (!messages.length) {
           messagesBox.innerHTML = '<p class="empty-state">Сообщений пока нет.</p>';
           return;
         }
-
         messagesBox.replaceChildren(...messages.map((message) => {
           const item = document.createElement("article");
           item.className = `message message-${message.role}`;
@@ -129,10 +228,149 @@
         messagesBox.scrollTop = messagesBox.scrollHeight;
       }
 
+      function renderContext(report) {
+        const blocks = report.context_blocks || [];
+        contextBlocks.replaceChildren(...blocks.map((value) => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = value;
+          return chip;
+        }));
+
+        const metrics = [
+          ["estimate", report.estimated_prompt_tokens ?? 0],
+          ["prompt", report.actual_prompt_tokens ?? "n/a"],
+          ["total", report.actual_total_tokens ?? "n/a"],
+          ["included", report.included_messages ?? 0],
+          ["discarded", report.discarded_messages ?? 0],
+        ];
+        contextMetrics.replaceChildren(...metrics.flatMap(([label, value]) => {
+          const dt = document.createElement("dt");
+          dt.textContent = label;
+          const dd = document.createElement("dd");
+          dd.textContent = value;
+          return [dt, dd];
+        }));
+
+        renderList(keptDetails, report.kept_details || [], "Пока нет.");
+        renderList(lostDetails, report.lost_details || [], "Пока нет.");
+        promptPreview.textContent = report.prompt_preview || "Пока нет prompt.";
+      }
+
+      function renderStrategyState(data) {
+        const state = data.strategy_state || {};
+        const strategy = data.active_strategy;
+        strategyState.replaceChildren();
+        branchControls.replaceChildren();
+
+        if (strategy === "sticky_facts") {
+          renderObjectState("Facts", state.facts || {});
+        } else if (strategy === "branching") {
+          renderBranchState(state);
+        } else if (strategy === "profile_summaries") {
+          renderObjectState("Profile", state.profile || {});
+          renderTextState("Current summary", state.summary || "Пока нет.");
+          renderListState("Archived summaries", state.archived_summaries || []);
+        } else if (strategy === "context_leveling") {
+          renderObjectState("Levels", state.levels || {});
+        } else if (strategy === "conversation_recreation") {
+          renderObjectState("Recreated state", state.conversation_state || {});
+        } else {
+          renderTextState("State", "Эта стратегия хранит только transcript и последний prompt report.");
+        }
+      }
+
+      function renderObjectState(title, value) {
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const pre = document.createElement("pre");
+        pre.className = "state-pre";
+        pre.textContent = JSON.stringify(value, null, 2);
+        strategyState.append(heading, pre);
+      }
+
+      function renderTextState(title, value) {
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const p = document.createElement("p");
+        p.className = "memory-text";
+        p.textContent = value;
+        strategyState.append(heading, p);
+      }
+
+      function renderListState(title, items) {
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const ul = document.createElement("ul");
+        ul.className = "memory-list";
+        renderList(ul, items, "Пока нет.");
+        strategyState.append(heading, ul);
+      }
+
+      function renderBranchState(state) {
+        renderTextState("Checkpoint", `${state.checkpoint_message_count || 0} сообщений`);
+        const branches = document.createElement("div");
+        branches.className = "branch-list";
+        (state.branches || []).forEach((branch) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = branch.active ? "branch-button active" : "branch-button";
+          button.dataset.branchId = branch.id;
+          button.textContent = `${branch.name} · ${branch.message_count}`;
+          branches.append(button);
+        });
+        strategyState.append(branches);
+
+        const checkpoint = document.createElement("button");
+        checkpoint.type = "button";
+        checkpoint.className = "secondary-button";
+        checkpoint.dataset.action = "checkpoint";
+        checkpoint.textContent = "Save checkpoint";
+
+        const create = document.createElement("button");
+        create.type = "button";
+        create.className = "secondary-button";
+        create.dataset.action = "branches";
+        create.textContent = "Create branches";
+
+        branchControls.append(checkpoint, create);
+      }
+
+      function renderComparison(results) {
+        comparisonStatus.textContent = `${results.length} runs`;
+        if (!results.length) {
+          comparisonBody.innerHTML = '<tr><td colspan="6" class="empty-cell">Run all заполнит таблицу.</td></tr>';
+          return;
+        }
+        comparisonBody.replaceChildren(...results.map((item) => {
+          const row = document.createElement("tr");
+          row.append(
+            tableCell(item.strategy_name || item.strategy_id),
+            tableCell(`${item.retained_score ?? 0}/10 · UX ${item.convenience_score ?? "-"}/10`),
+            tableCell(`${item.total_tokens || 0} actual\n${item.estimated_prompt_tokens || 0} est`),
+            tableCell(`$${Number(item.cost || 0).toFixed(6)}\n${Math.round(item.duration_ms || 0)} ms`),
+            tableCell((item.lost_details || []).join(", ") || "нет"),
+            tableCell(item.final_answer || "нет ответа", "answer-cell"),
+          );
+          return row;
+        }));
+      }
+
+      function tableCell(text, className = "") {
+        const cell = document.createElement("td");
+        if (className) cell.className = className;
+        cell.textContent = text;
+        return cell;
+      }
+
       function renderList(node, items, emptyText) {
         const values = (items || []).filter(Boolean);
-        if (values.length === 0) {
-          node.innerHTML = `<li class="empty-list">${emptyText}</li>`;
+        if (!values.length) {
+          node.innerHTML = "";
+          const empty = document.createElement("li");
+          empty.className = "empty-list";
+          empty.textContent = emptyText;
+          node.append(empty);
           return;
         }
         node.replaceChildren(...values.map((value) => {
@@ -142,83 +380,31 @@
         }));
       }
 
-      function renderMemory(data) {
-        const profile = data.profile || {};
-        styleMemory.textContent = profile.style || "Пока нет данных.";
-        currentSummary.textContent = data.current_chat_summary || "Пока нет данных.";
-        renderList(factsMemory, profile.facts, "Фактов пока нет.");
-        renderList(inferencesMemory, profile.inferences, "Выводов пока нет.");
-        renderArchivedChats(data.archived_chats || []);
-      }
-
-      function renderArchivedChats(chats) {
-        const values = chats.filter(Boolean);
-        if (values.length === 0) {
-          archivedMemory.innerHTML = '<li class="empty-list">Прошлых чатов пока нет.</li>';
-          return;
-        }
-
-        archivedMemory.replaceChildren(...values.map((chat) => {
-          const item = document.createElement("li");
-          item.className = "archived-chat";
-
-          const summary = document.createElement("span");
-          summary.className = "archived-summary";
-          summary.textContent = chat.summary || "Чат без summary.";
-
-          const meta = document.createElement("span");
-          meta.className = "archived-meta";
-          const count = chat.messages ? chat.messages.length : chat.message_count || 0;
-          meta.textContent = count ? `${count} сообщений` : "только summary";
-
-          item.append(summary, meta);
-
-          if (chat.id && count > 0) {
-            const button = document.createElement("button");
-            button.className = "chat-switch-button";
-            button.type = "button";
-            button.dataset.chatId = chat.id;
-            button.textContent = "Вернуться";
-            item.append(button);
-          }
-
-          return item;
-        }));
-      }
-
-      function renderState(data) {
-        renderMessages(data.messages || []);
-        renderMemory(data);
-        renderDemoProgress(data);
-      }
-
-      function renderDemoProgress(data) {
+      function renderDemoButtons(data) {
         const progress = data.demo_progress ?? 0;
-        const total = data.demo_total ?? 25;
-        demoComplete = Boolean(data.demo_complete || progress >= total);
-        demoButton.textContent = demoComplete
-          ? `Сценарий завершён (${total}/${total})`
-          : `Тестовый сценарий ${progress}/${total}`;
-        demoButton.disabled = demoComplete;
+        const total = data.demo_total ?? 12;
+        nextStepButton.textContent = data.demo_complete
+          ? `Done (${total}/${total})`
+          : `Next step ${progress}/${total}`;
       }
 
       function renderMetadata(data) {
         const meta = data.metadata || {};
+        const report = data.context_report || {};
         const items = [];
         if (meta.model) items.push(`model: ${meta.model}`);
         if (meta.duration_ms !== null && meta.duration_ms !== undefined) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
         if (meta.total_tokens !== null && meta.total_tokens !== undefined) items.push(`tokens: ${meta.total_tokens}`);
+        if (report.estimated_prompt_tokens !== null && report.estimated_prompt_tokens !== undefined) items.push(`est prompt: ${report.estimated_prompt_tokens}`);
         if (meta.cost !== null && meta.cost !== undefined) items.push(`cost: $${Number(meta.cost).toFixed(6)}`);
-        if (data.memory_update_error) items.push(`memory update warning: ${data.memory_update_error}`);
+        if (data.memory_update_error) items.push(`memory warning: ${data.memory_update_error}`);
         metadataBox.textContent = items.length ? items.join(" · ") : "Метаданные недоступны.";
       }
 
       async function loadState() {
         setStatus("Загрузка...", "loading");
         try {
-          const response = await fetch("/api/chat");
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Load failed");
+          const data = await requestJson("/api/chat");
           renderState(data);
           setStatus("Готово");
         } catch (error) {
@@ -227,124 +413,107 @@
         }
       }
 
-      form.addEventListener("submit", async (event) => {
+      async function runAction(label, callback) {
+        abortController = new AbortController();
+        setBusy(true);
+        setStatus(label, "loading");
+        try {
+          const data = await callback();
+          renderState(data);
+          renderMetadata(data);
+          setStatus("Готово");
+        } catch (error) {
+          if (error.name === "AbortError") {
+            setStatus("Остановлено", "error");
+            metadataBox.textContent = "Запрос остановлен в браузере.";
+          } else {
+            setStatus("Ошибка", "error");
+            metadataBox.textContent = error.message;
+          }
+        } finally {
+          abortController = null;
+          setBusy(false);
+          messageInput.focus();
+        }
+      }
+
+      strategyTabs.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-strategy]");
+        if (!button) return;
+        runAction("Strategy...", () => requestJson("/api/context/strategy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ strategy: button.dataset.strategy }),
+        }));
+      });
+
+      form.addEventListener("submit", (event) => {
         event.preventDefault();
         const message = messageInput.value.trim();
         if (!message) {
           form.reportValidity();
           return;
         }
-
-        setBusy(true);
-        setStatus("Запрос...", "loading");
-        metadataBox.textContent = "Ждем ответ OpenRouter и обновление памяти...";
-
-        try {
-          const response = await fetch("/api/chat", {
+        runAction("Запрос...", async () => {
+          const data = await requestJson("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message }),
           });
-          const data = await response.json();
-          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Unknown error"}`);
           messageInput.value = "";
-          renderState(data);
-          renderMetadata(data);
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-          messageInput.focus();
-        }
+          return data;
+        });
       });
 
-      newButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("Архивация...", "loading");
-        try {
-          const response = await fetch("/api/chat/new", { method: "POST" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "New chat failed");
-          renderState(data);
-          metadataBox.textContent = "Текущий чат архивирован.";
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
+      resetDemoButton.addEventListener("click", () => {
+        runAction("Reset...", () => requestJson("/api/demo/reset", { method: "POST" }));
       });
 
-      archivedMemory.addEventListener("click", async (event) => {
-        const button = event.target.closest("button[data-chat-id]");
-        if (!button) {
+      nextStepButton.addEventListener("click", () => {
+        runAction("Demo step...", () => requestJson("/api/demo/next", { method: "POST" }));
+      });
+
+      runActiveButton.addEventListener("click", () => {
+        runAction("Run active...", () => requestJson("/api/demo/run-active", { method: "POST" }));
+      });
+
+      runAllButton.addEventListener("click", () => {
+        const warning = latestState?.demo_call_warning || "Run all sends many model calls.";
+        if (!window.confirm(`${warning}\n\nПродолжить?`)) return;
+        runAction("Run all...", () => requestJson("/api/demo/run-all", { method: "POST" }));
+      });
+
+      stopRunButton.addEventListener("click", () => {
+        if (abortController) abortController.abort();
+      });
+
+      newButton.addEventListener("click", () => {
+        runAction("Новый чат...", () => requestJson("/api/chat/new", { method: "POST" }));
+      });
+
+      clearButton.addEventListener("click", () => {
+        runAction("Очистка...", () => requestJson("/api/chat", { method: "DELETE" }));
+      });
+
+      branchControls.addEventListener("click", (event) => {
+        const actionButton = event.target.closest("button[data-action]");
+        if (actionButton?.dataset.action === "checkpoint") {
+          runAction("Checkpoint...", () => requestJson("/api/context/checkpoint", { method: "POST" }));
           return;
         }
-
-        setBusy(true);
-        setStatus("Возврат...", "loading");
-        try {
-          const response = await fetch("/api/chat/resume", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: button.dataset.chatId }),
-          });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Resume chat failed");
-          renderState(data);
-          metadataBox.textContent = "Старый чат восстановлен. Можно продолжать диалог.";
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
+        if (actionButton?.dataset.action === "branches") {
+          runAction("Branches...", () => requestJson("/api/context/branches", { method: "POST" }));
         }
       });
 
-      demoButton.addEventListener("click", async () => {
-        if (demoComplete) {
-          return;
-        }
-
-        setBusy(true);
-        setStatus("Сценарий...", "loading");
-        metadataBox.textContent = "Отправляем следующее тестовое сообщение...";
-
-        try {
-          const response = await fetch("/api/demo/next", { method: "POST" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(`${data.status || response.status}: ${data.error || "Demo step failed"}`);
-          renderState(data);
-          renderMetadata(data);
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
-      });
-
-      clearButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("Очистка...", "loading");
-        try {
-          const response = await fetch("/api/chat", { method: "DELETE" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Clear failed");
-          renderState(data);
-          metadataBox.textContent = "Память этого клиента очищена.";
-          setStatus("Готово");
-        } catch (error) {
-          setStatus("Ошибка", "error");
-          metadataBox.textContent = error.message;
-        } finally {
-          setBusy(false);
-        }
+      strategyState.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-branch-id]");
+        if (!button) return;
+        runAction("Branch...", () => requestJson("/api/context/branch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ branch_id: button.dataset.branchId }),
+        }));
       });
 
       loadState();
