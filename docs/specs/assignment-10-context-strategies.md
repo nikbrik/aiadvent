@@ -21,7 +21,7 @@ Additional strategies kept or added in this snapshot:
 
 The Flask app stores per-client JSON state in `llm_demo/data/clients/<client_id>.json`. Each strategy has its own isolated state under `strategies.<strategy_id>`, and only the active strategy's prompt builder controls what is sent to the model.
 
-The UI exposes strategy tabs, demo controls, a timeline, branch controls, prompt preview, context report, retained/lost details, and a comparison table.
+The UI exposes strategy tabs, demo controls, a timeline, branch controls, prompt preview, context report, retained/lost details, and a comparison table. `Stop run` sets a per-client server flag, so long `Run active` / `Run all` executions stop between model calls instead of only aborting the browser request. Profile-memory token/cost totals include both the user-facing answer call and the auxiliary memory-update call.
 
 The scripted scenario has 12 messages about collecting a product requirements document for a family task app. Early details are intentionally important in the final answer, so the demo makes context loss visible.
 

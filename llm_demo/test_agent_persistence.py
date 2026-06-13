@@ -19,8 +19,17 @@ class FakeLLM:
 
     def __call__(self, messages, **options):
         self.calls.append(messages)
+        prompt_tokens = max(1, sum(len(item.get("content", "")) for item in messages) // 20)
+        metadata = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": 3,
+            "total_tokens": prompt_tokens + 3,
+            "cost": 0.000001,
+            "duration_ms": 1,
+        }
         if messages[0]["content"].startswith("You update long-term memory"):
             return {
+                **metadata,
                 "content": json.dumps({
                     "style": "",
                     "facts": ["user name is Nikita"],
@@ -28,7 +37,7 @@ class FakeLLM:
                     "current_chat_summary": "The user introduced himself as Nikita.",
                 })
             }
-        return {"content": "Запомнил."}
+        return {**metadata, "content": "Запомнил."}
 
 
 def prompt_text(messages):
@@ -120,6 +129,28 @@ class AgentPersistenceTest(unittest.TestCase):
                 resumed_prompt,
             )
 
+    def test_invalid_memory_version_falls_back_to_legacy_migration(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = FileMemoryStore(data_dir)
+            path = store.path_for(CLIENT_ID)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({
+                    "version": "not-a-number",
+                    "current_chat": {
+                        "messages": [
+                            {"role": "user", "content": "Меня зовут Никита."},
+                        ],
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            snapshot = ChatAgent(store, FakeLLM()).snapshot(CLIENT_ID)
+
+            self.assertEqual(snapshot["active_strategy"], "profile_summaries")
+            self.assertEqual(snapshot["messages"], [{"role": "user", "content": "Меня зовут Никита."}])
+
 
 class ContextStrategyTest(unittest.TestCase):
     def test_strategies_do_not_share_prompt_blocks(self):
@@ -152,6 +183,34 @@ class ContextStrategyTest(unittest.TestCase):
             self.assertNotIn("Сообщение 0 EARLY_DETAIL", final_prompt)
             self.assertIn("Сообщение 3 EARLY_DETAIL", final_prompt)
             self.assertLessEqual(len(agent.snapshot(CLIENT_ID)["messages"]), 4)
+
+    def test_sliding_window_normalizes_loaded_state_to_window(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = FileMemoryStore(data_dir)
+            path = store.path_for(CLIENT_ID)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            messages = [
+                {"role": "user", "content": f"stored message {index}"}
+                for index in range(8)
+            ]
+            path.write_text(
+                json.dumps({
+                    "version": 2,
+                    "active_strategy": "sliding_window",
+                    "strategies": {
+                        "sliding_window": {
+                            "messages": messages,
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            snapshot = ChatAgent(store, FakeLLM()).snapshot(CLIENT_ID)
+
+            self.assertEqual(len(snapshot["messages"]), 4)
+            self.assertNotIn("stored message 0", prompt_text(snapshot["messages"]))
+            self.assertIn("stored message 7", prompt_text(snapshot["messages"]))
 
     def test_sticky_facts_are_sent_with_recent_messages(self):
         with tempfile.TemporaryDirectory() as data_dir:
@@ -189,6 +248,30 @@ class ContextStrategyTest(unittest.TestCase):
             final_prompt = prompt_text(llm.calls[-1])
             self.assertIn("A_ONLY", final_prompt)
             self.assertNotIn("B_ONLY", final_prompt)
+
+    def test_branching_recovers_empty_branch_state(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = FileMemoryStore(data_dir)
+            path = store.path_for(CLIENT_ID)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({
+                    "version": 2,
+                    "active_strategy": "branching",
+                    "strategies": {
+                        "branching": {
+                            "active_branch": "missing",
+                            "branches": {},
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            snapshot = ChatAgent(store, FakeLLM()).snapshot(CLIENT_ID)
+
+            self.assertEqual(snapshot["strategy_state"]["active_branch"], "main")
+            self.assertEqual(len(snapshot["strategy_state"]["branches"]), 1)
 
     def test_token_cut_uses_budget_instead_of_message_count(self):
         with tempfile.TemporaryDirectory() as data_dir:
@@ -246,6 +329,19 @@ class ContextStrategyTest(unittest.TestCase):
 
             self.assertIn("Profile Memory + History Summaries", final_prompt)
             self.assertIn("The user introduced himself as Nikita.", final_prompt)
+
+    def test_profile_memory_metrics_include_auxiliary_update_calls(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            agent = ChatAgent(FileMemoryStore(data_dir), FakeLLM())
+            agent.set_strategy(CLIENT_ID, "profile_summaries")
+
+            snapshot = agent.respond(CLIENT_ID, "Меня зовут Никита.")
+            metrics = snapshot["strategy_state"]["metrics"]
+
+            self.assertEqual(metrics["main_calls"], 1)
+            self.assertEqual(metrics["auxiliary_calls"], 1)
+            self.assertEqual(metrics["calls"], 2)
+            self.assertGreater(metrics["total_tokens"], snapshot["context_report"]["actual_total_tokens"])
 
     def test_same_demo_scenario_runs_for_all_strategies(self):
         with tempfile.TemporaryDirectory() as data_dir:

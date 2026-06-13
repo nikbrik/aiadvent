@@ -170,12 +170,15 @@ def empty_profile():
 def default_metrics():
     return {
         "calls": 0,
+        "main_calls": 0,
+        "auxiliary_calls": 0,
         "estimated_prompt_tokens": 0,
         "total_tokens": 0,
         "total_estimated_prompt_tokens": 0,
         "total_cost": 0,
         "total_duration_ms": 0,
         "last_completion": {},
+        "last_auxiliary_completion": {},
     }
 
 
@@ -502,12 +505,16 @@ class ChatAgent:
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
         ]
         completion = self.llm(messages=messages, **agent_options())
-        return parse_json_object(completion.get("content") or "")
+        return {
+            "content": completion.get("content") or "",
+            "messages": messages,
+            "metadata": completion_metadata(completion),
+        }
 
 
 def normalize_memory(data):
     memory = default_memory()
-    old_schema = not isinstance(data, dict) or int(data.get("version") or 1) < 2
+    old_schema = memory_schema_version(data) < 2
     if isinstance(data, dict):
         memory["version"] = 2
         memory["created_at"] = str(data.get("created_at") or memory["created_at"])
@@ -553,7 +560,7 @@ def normalize_strategy_state(strategy_id, raw_state):
     if not isinstance(raw_state, dict):
         return state
 
-    state["messages"] = clean_messages(raw_state.get("messages"))
+    state["messages"] = clean_messages(raw_state.get("messages"), limit=strategy_message_limit(strategy_id))
     state["last_prompt"] = clean_messages(raw_state.get("last_prompt"))
     if isinstance(raw_state.get("context_report"), dict):
         report = default_context_report(strategy_id)
@@ -588,6 +595,8 @@ def normalize_strategy_state(strategy_id, raw_state):
                     "messages": clean_messages(branch.get("messages")),
                     "created_at": str(branch.get("created_at") or ""),
                 }
+        if not state["branches"]:
+            state["branches"] = default_strategy_state("branching")["branches"]
         active = str(raw_state.get("active_branch") or "main")
         state["active_branch"] = active if active in state["branches"] else next(iter(state["branches"]))
     elif strategy_id == PROFILE_STRATEGY:
@@ -957,7 +966,9 @@ def update_strategy_after_reply(agent, memory, strategy_id, user_message, assist
     if strategy_id != PROFILE_STRATEGY:
         return
     state = memory["strategies"][PROFILE_STRATEGY]
-    update = agent.build_profile_memory_update(state, user_message, assistant_reply)
+    update_payload = agent.build_profile_memory_update(state, user_message, assistant_reply)
+    update_auxiliary_metrics(state, update_payload.get("messages", []), update_payload.get("metadata", {}))
+    update = parse_json_object(update_payload.get("content") or "")
     apply_profile_update(state, update)
     memory["profile"] = deepcopy(state["profile"])
     memory["current_chat"]["summary"] = state.get("summary", "")
@@ -976,8 +987,7 @@ def append_strategy_turn(memory, strategy_id, user_message, assistant_reply):
         state["messages"] = clean_messages(branch["messages"])
     else:
         state["messages"].extend(turn)
-        limit = SLIDING_WINDOW_MESSAGES if strategy_id == "sliding_window" else MAX_STORED_MESSAGES
-        state["messages"] = clean_messages(state["messages"], limit=limit)
+        state["messages"] = clean_messages(state["messages"], limit=strategy_message_limit(strategy_id))
 
 
 def append_compat_turn(memory, user_message, assistant_reply):
@@ -988,6 +998,9 @@ def append_compat_turn(memory, user_message, assistant_reply):
 
 def active_branch(state):
     branches = state.get("branches") or {}
+    if not branches:
+        state["branches"] = default_strategy_state("branching")["branches"]
+        branches = state["branches"]
     active = state.get("active_branch") or "main"
     if active not in branches:
         active = next(iter(branches))
@@ -1007,12 +1020,13 @@ def set_strategy_messages(state, strategy_id, messages):
         branch["messages"] = clean_messages(messages)
         state["messages"] = clean_messages(messages)
     else:
-        state["messages"] = clean_messages(messages)
+        state["messages"] = clean_messages(messages, limit=strategy_message_limit(strategy_id))
 
 
 def update_metrics(state, report, metadata):
     metrics = state.setdefault("metrics", default_metrics())
     metrics["calls"] = int(metrics.get("calls") or 0) + 1
+    metrics["main_calls"] = int(metrics.get("main_calls") or 0) + 1
     estimate = int(report.get("estimated_prompt_tokens") or 0)
     metrics["estimated_prompt_tokens"] = estimate
     metrics["total_estimated_prompt_tokens"] = int(metrics.get("total_estimated_prompt_tokens") or 0) + estimate
@@ -1020,6 +1034,18 @@ def update_metrics(state, report, metadata):
     metrics["total_cost"] = float(metrics.get("total_cost") or 0) + float(metadata.get("cost") or 0)
     metrics["total_duration_ms"] = int(metrics.get("total_duration_ms") or 0) + int(metadata.get("duration_ms") or 0)
     metrics["last_completion"] = deepcopy(metadata)
+
+
+def update_auxiliary_metrics(state, messages, metadata):
+    metrics = state.setdefault("metrics", default_metrics())
+    metrics["calls"] = int(metrics.get("calls") or 0) + 1
+    metrics["auxiliary_calls"] = int(metrics.get("auxiliary_calls") or 0) + 1
+    estimate = estimate_tokens_for_messages(messages)
+    metrics["total_estimated_prompt_tokens"] = int(metrics.get("total_estimated_prompt_tokens") or 0) + estimate
+    metrics["total_tokens"] = int(metrics.get("total_tokens") or 0) + int(metadata.get("total_tokens") or 0)
+    metrics["total_cost"] = float(metrics.get("total_cost") or 0) + float(metadata.get("cost") or 0)
+    metrics["total_duration_ms"] = int(metrics.get("total_duration_ms") or 0) + int(metadata.get("duration_ms") or 0)
+    metrics["last_auxiliary_completion"] = deepcopy(metadata)
 
 
 def apply_profile_update(state, update):
@@ -1245,6 +1271,15 @@ def normalize_archived_chats(value):
     return chats
 
 
+def memory_schema_version(data):
+    if not isinstance(data, dict):
+        return 0
+    try:
+        return int(data.get("version") or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def normalize_progress(value):
     try:
         progress = int(value)
@@ -1282,6 +1317,10 @@ def clean_messages(value, limit=MAX_STORED_MESSAGES):
         if role in ("user", "assistant", "system") and content:
             messages.append({"role": role, "content": content})
     return messages[-limit:]
+
+
+def strategy_message_limit(strategy_id):
+    return SLIDING_WINDOW_MESSAGES if strategy_id == "sliding_window" else MAX_STORED_MESSAGES
 
 
 def format_list(items):

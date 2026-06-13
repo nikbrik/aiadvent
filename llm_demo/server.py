@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 import uuid
 
 from flask import Flask, g, jsonify, request, send_from_directory
@@ -29,6 +30,12 @@ agent = ChatAgent(
     memory_store=FileMemoryStore(os.path.join(os.path.dirname(__file__), "data", "clients")),
     llm=chat_completion,
 )
+demo_stop_lock = threading.Lock()
+demo_stop_requests = set()
+
+
+class DemoRunStopped(Exception):
+    pass
 
 
 def incoming_body():
@@ -228,15 +235,21 @@ def demo_run_active():
     state = agent.snapshot(g.client_id)
     active_strategy = state.get("active_strategy")
     try:
+        clear_demo_stop(g.client_id)
         agent.reset_strategy(g.client_id, active_strategy)
         agent.set_demo_progress(g.client_id, 0)
         result = None
         for progress in range(DEMO_TOTAL):
-            result = run_demo_step(progress)
+            result = run_demo_step(progress, allow_stop=True)
     except OpenRouterError as exc:
         return error_response(str(exc), exc.status)
     except ValueError as exc:
         return error_response(str(exc), 400)
+    except DemoRunStopped:
+        clear_demo_stop(g.client_id)
+        result = agent.snapshot(g.client_id)
+        result["demo_stopped"] = True
+        return jsonify(with_demo_metadata(result, complete=False))
 
     return jsonify(with_demo_metadata(result or agent.snapshot(g.client_id), complete=True))
 
@@ -245,13 +258,15 @@ def demo_run_active():
 def demo_run_all():
     results = []
     try:
+        clear_demo_stop(g.client_id)
         agent.reset_demo(g.client_id)
         for strategy_id in STRATEGY_IDS:
+            ensure_demo_not_stopped(g.client_id)
             agent.set_strategy(g.client_id, strategy_id)
             agent.reset_strategy(g.client_id, strategy_id)
             agent.set_demo_progress(g.client_id, 0)
             for progress in range(DEMO_TOTAL):
-                run_demo_step(progress)
+                run_demo_step(progress, allow_stop=True)
             snapshot = agent.snapshot(g.client_id)
             results.append(comparison_result_for(snapshot))
         result = agent.save_comparison_results(g.client_id, results)
@@ -259,11 +274,27 @@ def demo_run_all():
         return error_response(str(exc), exc.status)
     except ValueError as exc:
         return error_response(str(exc), 400)
+    except DemoRunStopped:
+        clear_demo_stop(g.client_id)
+        result = agent.save_comparison_results(g.client_id, results)
+        result["demo_stopped"] = True
+        return jsonify(with_demo_metadata(result, complete=False))
 
     return jsonify(with_demo_metadata(result, complete=True))
 
 
-def run_demo_step(progress):
+@app.post("/api/demo/stop")
+def demo_stop():
+    request_demo_stop(g.client_id)
+    result = agent.snapshot(g.client_id)
+    result["demo_stopping"] = True
+    return jsonify(with_demo_metadata(result, complete=False))
+
+
+def run_demo_step(progress, allow_stop=False):
+    if allow_stop:
+        ensure_demo_not_stopped(g.client_id)
+
     state = agent.snapshot(g.client_id)
     active_strategy = state.get("active_strategy")
     step_number = progress + 1
@@ -291,6 +322,23 @@ def run_demo_step(progress):
     if memory_update_error:
         result["memory_update_error"] = memory_update_error
     return result
+
+
+def request_demo_stop(client_id):
+    with demo_stop_lock:
+        demo_stop_requests.add(client_id)
+
+
+def clear_demo_stop(client_id):
+    with demo_stop_lock:
+        demo_stop_requests.discard(client_id)
+
+
+def ensure_demo_not_stopped(client_id):
+    with demo_stop_lock:
+        stopped = client_id in demo_stop_requests
+    if stopped:
+        raise DemoRunStopped()
 
 
 def with_demo_metadata(data, complete=None):

@@ -22,6 +22,10 @@ The active strategy is selected by `active_strategy`. `ChatAgent.respond()` call
 
 `Branching` uses step 8 as checkpoint, then runs steps 9-10 in `branch_a` and steps 11-12 in `branch_b`.
 
+`Stop run` is implemented as a per-client server-side cancellation flag. It is best-effort: an in-flight OpenRouter request finishes, then `Run active` / `Run all` stops before the next scenario step.
+
+`Profile Memory + History Summaries` keeps the main prompt inspector focused on the user-facing answer, but its aggregate metrics count the auxiliary memory-update LLM call too.
+
 ## Checks
 
 No-network tests cover persistence plus strategy behavior:

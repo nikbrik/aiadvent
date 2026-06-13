@@ -392,6 +392,8 @@
         const meta = data.metadata || {};
         const report = data.context_report || {};
         const items = [];
+        if (data.demo_stopped) items.push("demo: stopped");
+        if (data.demo_stopping) items.push("demo: stopping");
         if (meta.model) items.push(`model: ${meta.model}`);
         if (meta.duration_ms !== null && meta.duration_ms !== undefined) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
         if (meta.total_tokens !== null && meta.total_tokens !== undefined) items.push(`tokens: ${meta.total_tokens}`);
@@ -484,7 +486,12 @@
       });
 
       stopRunButton.addEventListener("click", () => {
-        if (abortController) abortController.abort();
+        if (!abortController) return;
+        stopRunButton.disabled = true;
+        setStatus("Stopping...", "loading");
+        fetch("/api/demo/stop", { method: "POST" }).catch(() => {
+          abortController?.abort();
+        });
       });
 
       newButton.addEventListener("click", () => {
