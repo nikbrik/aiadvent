@@ -21,6 +21,7 @@
           <button id="next-step" class="primary-button" type="button">Next step</button>
           <button id="run-active" class="demo-button" type="button">Run active</button>
           <button id="run-all" class="demo-button" type="button">Run all</button>
+          <button id="continue-run" class="demo-button" type="button" disabled>Continue</button>
           <button id="stop-run" class="danger-button" type="button" disabled>Stop</button>
         </div>
       </section>
@@ -117,6 +118,7 @@
       const nextStepButton = document.querySelector("#next-step");
       const runActiveButton = document.querySelector("#run-active");
       const runAllButton = document.querySelector("#run-all");
+      const continueRunButton = document.querySelector("#continue-run");
       const stopRunButton = document.querySelector("#stop-run");
       const strategyTabs = document.querySelector("#strategy-tabs");
       const activeTitle = document.querySelector("#active-title");
@@ -133,9 +135,11 @@
 
       let abortController = null;
       let latestState = null;
+      let busy = false;
 
       function setBusy(isBusy) {
-        [sendButton, newButton, clearButton, resetDemoButton, nextStepButton, runActiveButton, runAllButton].forEach((button) => {
+        busy = isBusy;
+        [sendButton, newButton, clearButton, resetDemoButton, nextStepButton, runActiveButton, runAllButton, continueRunButton].forEach((button) => {
           button.disabled = isBusy;
         });
         stopRunButton.disabled = !isBusy;
@@ -263,7 +267,13 @@
         strategyState.replaceChildren();
         branchControls.replaceChildren();
 
-        if (strategy === "sticky_facts") {
+        if (strategy === "sliding_window") {
+          renderObjectState("Sliding window", {
+            window_messages: (state.messages || []).length,
+            total_seen_messages: state.total_seen_messages || 0,
+            discarded_messages_total: state.discarded_messages_total || 0,
+          });
+        } else if (strategy === "sticky_facts") {
           renderObjectState("Facts", state.facts || {});
         } else if (strategy === "branching") {
           renderBranchState(state);
@@ -349,11 +359,32 @@
             tableCell(`${item.retained_score ?? 0}/10 · UX ${item.convenience_score ?? "-"}/10`),
             tableCell(`${item.total_tokens || 0} actual\n${item.estimated_prompt_tokens || 0} est`),
             tableCell(`$${Number(item.cost || 0).toFixed(6)}\n${Math.round(item.duration_ms || 0)} ms`),
-            tableCell((item.lost_details || []).join(", ") || "нет"),
-            tableCell(item.final_answer || "нет ответа", "answer-cell"),
+            tableCell(comparisonLostDetails(item)),
+            tableCell(comparisonFinalAnswer(item), "answer-cell"),
           );
           return row;
         }));
+      }
+
+      function comparisonLostDetails(item) {
+        const branches = item.branch_results || [];
+        if (branches.length) {
+          return branches.map((branch) => {
+            const lost = (branch.lost_details || []).join(", ") || "нет";
+            return `${branch.name || branch.id}: ${lost}`;
+          }).join("\n\n");
+        }
+        return (item.lost_details || []).join(", ") || "нет";
+      }
+
+      function comparisonFinalAnswer(item) {
+        const branches = item.branch_results || [];
+        if (branches.length) {
+          return branches.map((branch) => (
+            `${branch.name || branch.id} (${branch.retained_score ?? 0}/10): ${branch.final_answer || "нет ответа"}`
+          )).join("\n\n");
+        }
+        return item.final_answer || "нет ответа";
       }
 
       function tableCell(text, className = "") {
@@ -383,9 +414,14 @@
       function renderDemoButtons(data) {
         const progress = data.demo_progress ?? 0;
         const total = data.demo_total ?? 12;
+        const runState = data.demo_run || {};
         nextStepButton.textContent = data.demo_complete
           ? `Done (${total}/${total})`
           : `Next step ${progress}/${total}`;
+        continueRunButton.disabled = busy || !runState.mode;
+        continueRunButton.textContent = runState.mode
+          ? `Continue ${runState.mode} ${runState.progress || 0}/${total}`
+          : "Continue";
       }
 
       function renderMetadata(data) {
@@ -394,6 +430,8 @@
         const items = [];
         if (data.demo_stopped) items.push("demo: stopped");
         if (data.demo_stopping) items.push("demo: stopping");
+        if (data.demo_error) items.push(`demo error: ${data.demo_error}`);
+        if (data.demo_run?.error) items.push(`resumable: ${data.demo_run.error}`);
         if (meta.model) items.push(`model: ${meta.model}`);
         if (meta.duration_ms !== null && meta.duration_ms !== undefined) items.push(`time: ${Math.round(meta.duration_ms)} ms`);
         if (meta.total_tokens !== null && meta.total_tokens !== undefined) items.push(`tokens: ${meta.total_tokens}`);
@@ -423,7 +461,7 @@
           const data = await callback();
           renderState(data);
           renderMetadata(data);
-          setStatus("Готово");
+          setStatus(data.demo_error ? "Ошибка" : "Готово", data.demo_error ? "error" : "");
         } catch (error) {
           if (error.name === "AbortError") {
             setStatus("Остановлено", "error");
@@ -437,6 +475,28 @@
           setBusy(false);
           messageInput.focus();
         }
+      }
+
+      function waitForPaint() {
+        return new Promise((resolve) => window.setTimeout(resolve, 180));
+      }
+
+      async function runLiveDemo(label, starter) {
+        await runAction(label, async () => {
+          let data = await starter();
+          renderState(data);
+          renderMetadata(data);
+          await waitForPaint();
+
+          while (data.demo_run?.mode && !data.demo_error && !data.demo_stopped) {
+            setStatus(`Running ${data.demo_run.mode} ${data.demo_run.progress || 0}/${data.demo_total || 12}`, "loading");
+            data = await requestJson("/api/demo/continue-step", { method: "POST" });
+            renderState(data);
+            renderMetadata(data);
+            await waitForPaint();
+          }
+          return data;
+        });
       }
 
       strategyTabs.addEventListener("click", (event) => {
@@ -476,13 +536,17 @@
       });
 
       runActiveButton.addEventListener("click", () => {
-        runAction("Run active...", () => requestJson("/api/demo/run-active", { method: "POST" }));
+        runLiveDemo("Run active...", () => requestJson("/api/demo/start-active", { method: "POST" }));
       });
 
       runAllButton.addEventListener("click", () => {
         const warning = latestState?.demo_call_warning || "Run all sends many model calls.";
         if (!window.confirm(`${warning}\n\nПродолжить?`)) return;
-        runAction("Run all...", () => requestJson("/api/demo/run-all", { method: "POST" }));
+        runLiveDemo("Run all...", () => requestJson("/api/demo/start-all", { method: "POST" }));
+      });
+
+      continueRunButton.addEventListener("click", () => {
+        runLiveDemo("Continue...", () => requestJson("/api/demo/continue-step", { method: "POST" }));
       });
 
       stopRunButton.addEventListener("click", () => {

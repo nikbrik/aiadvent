@@ -232,54 +232,136 @@ def demo_next():
 
 @app.post("/api/demo/run-active")
 def demo_run_active():
+    return run_active_demo(reset=True)
+
+
+@app.post("/api/demo/start-active")
+def demo_start_active():
     state = agent.snapshot(g.client_id)
     active_strategy = state.get("active_strategy")
+    clear_demo_stop(g.client_id)
+    agent.reset_strategy(g.client_id, active_strategy)
+    agent.set_demo_progress(g.client_id, 0)
+    agent.set_strategy(g.client_id, active_strategy)
+    save_active_run(active_strategy, 0)
+    result = agent.snapshot(g.client_id)
+    result["demo_live_run"] = True
+    return jsonify(with_demo_metadata(result, complete=False))
+
+
+@app.post("/api/demo/continue")
+def demo_continue():
+    run_state = agent.snapshot(g.client_id).get("demo_run") or {}
+    if run_state.get("mode") == "active":
+        return run_active_demo(reset=False)
+    if run_state.get("mode") == "all":
+        return run_all_demo(reset=False)
+    return error_response("No resumable demo run was found", 400)
+
+
+def run_active_demo(reset):
+    state = agent.snapshot(g.client_id)
+    run_state = state.get("demo_run") or {}
+    active_strategy = run_state.get("strategy_id") if not reset else state.get("active_strategy")
+    progress = int(run_state.get("progress") or 0) if not reset else 0
     try:
         clear_demo_stop(g.client_id)
-        agent.reset_strategy(g.client_id, active_strategy)
-        agent.set_demo_progress(g.client_id, 0)
+        if reset:
+            agent.reset_strategy(g.client_id, active_strategy)
+            agent.set_demo_progress(g.client_id, 0)
+        agent.set_strategy(g.client_id, active_strategy)
+        save_active_run(active_strategy, progress)
         result = None
-        for progress in range(DEMO_TOTAL):
-            result = run_demo_step(progress, allow_stop=True)
+        for step_index in range(progress, DEMO_TOTAL):
+            result = run_demo_step(step_index, allow_stop=True)
+            save_active_run(active_strategy, step_index + 1)
     except OpenRouterError as exc:
-        return error_response(str(exc), exc.status)
+        return recover_demo_error(str(exc), exc.status)
     except ValueError as exc:
-        return error_response(str(exc), 400)
+        return recover_demo_error(str(exc), 400)
     except DemoRunStopped:
         clear_demo_stop(g.client_id)
         result = agent.snapshot(g.client_id)
         result["demo_stopped"] = True
         return jsonify(with_demo_metadata(result, complete=False))
 
+    agent.clear_demo_run(g.client_id)
     return jsonify(with_demo_metadata(result or agent.snapshot(g.client_id), complete=True))
 
 
 @app.post("/api/demo/run-all")
 def demo_run_all():
-    results = []
+    return run_all_demo(reset=True)
+
+
+@app.post("/api/demo/start-all")
+def demo_start_all():
+    clear_demo_stop(g.client_id)
+    agent.reset_demo(g.client_id)
+    agent.save_comparison_results(g.client_id, [])
+    save_all_run(0, 0, [])
+    result = agent.snapshot(g.client_id)
+    result["demo_live_run"] = True
+    return jsonify(with_demo_metadata(result, complete=False))
+
+
+@app.post("/api/demo/continue-step")
+def demo_continue_step():
+    try:
+        result = continue_demo_one_step()
+    except OpenRouterError as exc:
+        return recover_demo_error(str(exc), exc.status)
+    except ValueError as exc:
+        return recover_demo_error(str(exc), 400)
+    except DemoRunStopped:
+        clear_demo_stop(g.client_id)
+        result = agent.snapshot(g.client_id)
+        result["demo_stopped"] = True
+        return jsonify(with_demo_metadata(result, complete=False))
+    return jsonify(with_demo_metadata(result, complete=not (result.get("demo_run") or {}).get("mode")))
+
+
+def run_all_demo(reset):
+    state = agent.snapshot(g.client_id)
+    run_state = state.get("demo_run") or {}
+    results = [] if reset else list(run_state.get("results") or state.get("comparison_results") or [])
+    start_index = int(run_state.get("strategy_index") or 0) if not reset else 0
+    start_progress = int(run_state.get("progress") or 0) if not reset else 0
     try:
         clear_demo_stop(g.client_id)
-        agent.reset_demo(g.client_id)
-        for strategy_id in STRATEGY_IDS:
+        if reset:
+            agent.reset_demo(g.client_id)
+            agent.save_comparison_results(g.client_id, [])
+        save_all_run(start_index, start_progress, results)
+        for strategy_index in range(start_index, len(STRATEGY_IDS)):
+            strategy_id = STRATEGY_IDS[strategy_index]
             ensure_demo_not_stopped(g.client_id)
             agent.set_strategy(g.client_id, strategy_id)
-            agent.reset_strategy(g.client_id, strategy_id)
-            agent.set_demo_progress(g.client_id, 0)
-            for progress in range(DEMO_TOTAL):
-                run_demo_step(progress, allow_stop=True)
+            if reset or strategy_index != start_index or start_progress == 0:
+                agent.reset_strategy(g.client_id, strategy_id)
+                agent.set_demo_progress(g.client_id, 0)
+                start_progress = 0
+            save_all_run(strategy_index, start_progress, results, strategy_id=strategy_id)
+            for step_index in range(start_progress, DEMO_TOTAL):
+                run_demo_step(step_index, allow_stop=True)
+                save_all_run(strategy_index, step_index + 1, results, strategy_id=strategy_id)
             snapshot = agent.snapshot(g.client_id)
             results.append(comparison_result_for(snapshot))
+            agent.save_comparison_results(g.client_id, results)
+            save_all_run(strategy_index + 1, 0, results)
+            start_progress = 0
         result = agent.save_comparison_results(g.client_id, results)
     except OpenRouterError as exc:
-        return error_response(str(exc), exc.status)
+        return recover_demo_error(str(exc), exc.status)
     except ValueError as exc:
-        return error_response(str(exc), 400)
+        return recover_demo_error(str(exc), 400)
     except DemoRunStopped:
         clear_demo_stop(g.client_id)
         result = agent.save_comparison_results(g.client_id, results)
         result["demo_stopped"] = True
         return jsonify(with_demo_metadata(result, complete=False))
 
+    agent.clear_demo_run(g.client_id)
     return jsonify(with_demo_metadata(result, complete=True))
 
 
@@ -322,6 +404,116 @@ def run_demo_step(progress, allow_stop=False):
     if memory_update_error:
         result["memory_update_error"] = memory_update_error
     return result
+
+
+def continue_demo_one_step():
+    ensure_demo_not_stopped(g.client_id)
+    state = agent.snapshot(g.client_id)
+    run_state = state.get("demo_run") or {}
+    mode = run_state.get("mode")
+    if mode == "active":
+        return continue_active_one_step(run_state)
+    if mode == "all":
+        return continue_all_one_step(run_state)
+    raise ValueError("No resumable demo run was found")
+
+
+def continue_active_one_step(run_state):
+    strategy_id = run_state.get("strategy_id") or agent.snapshot(g.client_id).get("active_strategy")
+    progress = int(run_state.get("progress") or 0)
+    if progress >= DEMO_TOTAL:
+        agent.clear_demo_run(g.client_id)
+        result = agent.snapshot(g.client_id)
+        result["demo_live_run"] = True
+        return result
+
+    agent.set_strategy(g.client_id, strategy_id)
+    result = run_demo_step(progress, allow_stop=True)
+    save_active_run(strategy_id, progress + 1)
+
+    if progress + 1 >= DEMO_TOTAL:
+        agent.clear_demo_run(g.client_id)
+        result = agent.snapshot(g.client_id)
+        result["demo_complete"] = True
+    else:
+        result = agent.snapshot(g.client_id)
+    result["demo_live_run"] = True
+    result["demo_step"] = progress + 1
+    result["demo_message"] = DEMO_MESSAGES[progress]
+    return result
+
+
+def continue_all_one_step(run_state):
+    results = list(run_state.get("results") or [])
+    strategy_index = int(run_state.get("strategy_index") or 0)
+    progress = int(run_state.get("progress") or 0)
+
+    if strategy_index >= len(STRATEGY_IDS):
+        result = agent.save_comparison_results(g.client_id, results)
+        agent.clear_demo_run(g.client_id)
+        result = agent.snapshot(g.client_id)
+        result["demo_live_run"] = True
+        return result
+
+    strategy_id = STRATEGY_IDS[strategy_index]
+    agent.set_strategy(g.client_id, strategy_id)
+    if progress == 0:
+        agent.reset_strategy(g.client_id, strategy_id)
+        agent.set_demo_progress(g.client_id, 0)
+
+    result = run_demo_step(progress, allow_stop=True)
+    progress += 1
+    save_all_run(strategy_index, progress, results, strategy_id=strategy_id)
+
+    if progress >= DEMO_TOTAL:
+        snapshot = agent.snapshot(g.client_id)
+        results.append(comparison_result_for(snapshot))
+        agent.save_comparison_results(g.client_id, results)
+        save_all_run(strategy_index + 1, 0, results)
+        if strategy_index + 1 >= len(STRATEGY_IDS):
+            agent.clear_demo_run(g.client_id)
+
+    result = agent.snapshot(g.client_id)
+    result["demo_live_run"] = True
+    result["demo_step"] = progress
+    result["demo_message"] = DEMO_MESSAGES[progress - 1]
+    return result
+
+
+def save_active_run(strategy_id, progress, error=""):
+    agent.save_demo_run(g.client_id, {
+        "mode": "active",
+        "strategy_id": strategy_id,
+        "strategy_index": STRATEGY_IDS.index(strategy_id) if strategy_id in STRATEGY_IDS else 0,
+        "progress": progress,
+        "results": [],
+        "error": error,
+    })
+
+
+def save_all_run(strategy_index, progress, results, strategy_id=""):
+    if not strategy_id and 0 <= strategy_index < len(STRATEGY_IDS):
+        strategy_id = STRATEGY_IDS[strategy_index]
+    agent.save_demo_run(g.client_id, {
+        "mode": "all",
+        "strategy_id": strategy_id,
+        "strategy_index": strategy_index,
+        "progress": progress,
+        "results": results,
+        "error": "",
+    })
+
+
+def recover_demo_error(message, status):
+    state = agent.snapshot(g.client_id)
+    run_state = dict(state.get("demo_run") or {})
+    run_state["error"] = message
+    agent.save_demo_run(g.client_id, run_state)
+    state = agent.snapshot(g.client_id)
+    state["demo_error"] = message
+    state["demo_error_status"] = status
+    state["demo_resumable"] = True
+    return jsonify(with_demo_metadata(state, complete=False))
 
 
 def request_demo_stop(client_id):

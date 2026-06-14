@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_PROVIDER = {"allow_fallbacks": False}
-DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_PROVIDER = {"allow_fallbacks": True}
+DEFAULT_MODEL = "meta-llama/llama-3-8b-instruct"
+DEFAULT_MAX_TOKENS = 700
 REASONING_EXCLUDED = {"exclude": True}
 
 DEFAULT_STRATEGY = "sliding_window"
@@ -18,7 +19,7 @@ PROFILE_STRATEGY = "profile_summaries"
 MAX_STORED_MESSAGES = 120
 SLIDING_WINDOW_MESSAGES = 4
 STICKY_RECENT_MESSAGES = 4
-TOKEN_CUT_BUDGET = 420
+TOKEN_CUT_BUDGET = 320
 MAX_ARCHIVED_SUMMARIES = 8
 MAX_MEMORY_ITEMS = 24
 MAX_SUMMARY_CHARS = 900
@@ -139,6 +140,7 @@ def default_memory():
         "updated_at": now,
         "active_strategy": DEFAULT_STRATEGY,
         "demo_progress": 0,
+        "demo_run": {},
         "comparison_results": [],
         "profile": empty_profile(),
         "current_chat": empty_chat(),
@@ -209,6 +211,9 @@ def default_strategy_state(strategy_id):
     }
     if strategy_id == "sticky_facts":
         state["facts"] = {}
+    elif strategy_id == "sliding_window":
+        state["total_seen_messages"] = 0
+        state["discarded_messages_total"] = 0
     elif strategy_id == "branching":
         state["checkpoint"] = []
         state["active_branch"] = "main"
@@ -318,6 +323,7 @@ class ChatAgent:
     def reset_demo(self, client_id):
         memory = self.memory_store.load(client_id)
         memory["demo_progress"] = 0
+        memory["demo_run"] = {}
         memory["comparison_results"] = []
         memory["current_chat"] = empty_chat()
         memory["archived_chats"] = []
@@ -341,6 +347,18 @@ class ChatAgent:
     def save_comparison_results(self, client_id, results):
         memory = self.memory_store.load(client_id)
         memory["comparison_results"] = list(results or [])
+        self.memory_store.save(client_id, memory)
+        return public_memory(memory)
+
+    def save_demo_run(self, client_id, run_state):
+        memory = self.memory_store.load(client_id)
+        memory["demo_run"] = normalize_demo_run(run_state)
+        self.memory_store.save(client_id, memory)
+        return public_memory(memory)
+
+    def clear_demo_run(self, client_id):
+        memory = self.memory_store.load(client_id)
+        memory["demo_run"] = {}
         self.memory_store.save(client_id, memory)
         return public_memory(memory)
 
@@ -523,6 +541,8 @@ def normalize_memory(data):
             data.get("active_strategy") or (PROFILE_STRATEGY if old_schema else DEFAULT_STRATEGY)
         )
         memory["demo_progress"] = normalize_progress(data.get("demo_progress", 0))
+        if isinstance(data.get("demo_run"), dict):
+            memory["demo_run"] = normalize_demo_run(data["demo_run"])
         if isinstance(data.get("comparison_results"), list):
             memory["comparison_results"] = data["comparison_results"]
 
@@ -560,7 +580,9 @@ def normalize_strategy_state(strategy_id, raw_state):
     if not isinstance(raw_state, dict):
         return state
 
-    state["messages"] = clean_messages(raw_state.get("messages"), limit=strategy_message_limit(strategy_id))
+    raw_messages = clean_messages(raw_state.get("messages"))
+    message_limit = strategy_message_limit(strategy_id)
+    state["messages"] = clean_messages(raw_messages, limit=message_limit)
     state["last_prompt"] = clean_messages(raw_state.get("last_prompt"))
     if isinstance(raw_state.get("context_report"), dict):
         report = default_context_report(strategy_id)
@@ -577,7 +599,13 @@ def normalize_strategy_state(strategy_id, raw_state):
         })
         state["metrics"] = metrics
 
-    if strategy_id == "sticky_facts":
+    if strategy_id == "sliding_window":
+        total = int(raw_state.get("total_seen_messages") or len(raw_messages))
+        total = max(total, len(state["messages"]))
+        discarded = int(raw_state.get("discarded_messages_total") or max(0, total - len(state["messages"])))
+        state["total_seen_messages"] = total
+        state["discarded_messages_total"] = max(discarded, total - len(state["messages"]))
+    elif strategy_id == "sticky_facts":
         facts = raw_state.get("facts")
         state["facts"] = normalize_fact_dict(facts)
     elif strategy_id == "branching":
@@ -653,6 +681,7 @@ def public_memory(memory):
         "current_chat_summary": profile_state.get("summary", memory.get("current_chat", {}).get("summary", "")),
         "archived_chats": public_archived_chats(memory.get("archived_chats", [])),
         "demo_progress": normalize_progress(memory.get("demo_progress", 0)),
+        "demo_run": deepcopy(memory.get("demo_run", {})),
     }
 
 
@@ -680,7 +709,10 @@ def public_strategy_state(state, strategy_id):
         "messages": deepcopy(get_strategy_messages(state, strategy_id)),
         "metrics": deepcopy(state.get("metrics", default_metrics())),
     }
-    if strategy_id == "sticky_facts":
+    if strategy_id == "sliding_window":
+        data["total_seen_messages"] = int(state.get("total_seen_messages") or len(data["messages"]))
+        data["discarded_messages_total"] = int(state.get("discarded_messages_total") or 0)
+    elif strategy_id == "sticky_facts":
         data["facts"] = deepcopy(state.get("facts", {}))
     elif strategy_id == "branching":
         data["checkpoint_message_count"] = len(state.get("checkpoint") or [])
@@ -690,6 +722,7 @@ def public_strategy_state(state, strategy_id):
                 "id": branch.get("id", ""),
                 "name": branch.get("name", ""),
                 "message_count": len(branch.get("messages") or []),
+                "final_answer": last_assistant_message(branch.get("messages") or []),
                 "active": branch.get("id") == state.get("active_branch"),
             }
             for branch in state.get("branches", {}).values()
@@ -761,6 +794,10 @@ def base_system_prompt(title):
 def build_sliding_prompt(state, user_message):
     history = state.get("messages", [])
     recent = history[-SLIDING_WINDOW_MESSAGES:]
+    discarded = int(
+        state.get("discarded_messages_total")
+        or max(0, int(state.get("total_seen_messages") or len(history)) - len(recent))
+    )
     messages = [
         {"role": "system", "content": base_system_prompt("Sliding Window")},
         *deepcopy(recent),
@@ -770,8 +807,8 @@ def build_sliding_prompt(state, user_message):
         "sliding_window",
         ["System instructions", f"Last {SLIDING_WINDOW_MESSAGES} messages"],
         len(recent),
-        max(0, len(history) - len(recent)),
-        "Only the tail of the transcript is visible.",
+        discarded,
+        "Only the tail of the transcript is visible; older messages are physically dropped.",
     )
 
 
@@ -871,22 +908,33 @@ def build_token_cut_prompt(state, user_message):
     system = {"role": "system", "content": base_system_prompt("Tokenization and Cut")}
     user = {"role": "user", "content": user_message}
     selected = []
+    truncated = 0
     token_count = estimate_tokens_for_messages([system, user])
     for item in reversed(history):
         item_tokens = estimate_tokens_for_messages([item])
         if token_count + item_tokens > TOKEN_CUT_BUDGET:
+            truncated_item = truncate_message_to_budget(item, TOKEN_CUT_BUDGET - token_count)
+            if truncated_item:
+                selected.append(truncated_item)
+                token_count += estimate_tokens_for_messages([truncated_item])
+                truncated += 1
             break
         selected.append(item)
         token_count += item_tokens
     selected.reverse()
     messages = [system, *deepcopy(selected), user]
-    return messages, make_report(
+    blocks = ["System instructions", f"History cut to ~{TOKEN_CUT_BUDGET} tokens"]
+    if truncated:
+        blocks.append("Oversized history message truncated")
+    report = make_report(
         "token_cut",
-        ["System instructions", f"History cut to ~{TOKEN_CUT_BUDGET} tokens"],
+        blocks,
         len(selected),
         max(0, len(history) - len(selected)),
-        "The budget is estimated locally, so it is model-agnostic but approximate.",
+        "History is selected by estimated token budget; oversized history messages are cut.",
     )
+    report["truncated_messages"] = truncated
+    return messages, report
 
 
 def build_context_leveling_prompt(state, user_message):
@@ -986,8 +1034,14 @@ def append_strategy_turn(memory, strategy_id, user_message, assistant_reply):
         branch["messages"] = clean_messages(branch["messages"])
         state["messages"] = clean_messages(branch["messages"])
     else:
+        if strategy_id == "sliding_window":
+            state["total_seen_messages"] = int(state.get("total_seen_messages") or 0) + len(turn)
         state["messages"].extend(turn)
-        state["messages"] = clean_messages(state["messages"], limit=strategy_message_limit(strategy_id))
+        limit = strategy_message_limit(strategy_id)
+        overflow = max(0, len(state["messages"]) - limit)
+        if strategy_id == "sliding_window" and overflow:
+            state["discarded_messages_total"] = int(state.get("discarded_messages_total") or 0) + overflow
+        state["messages"] = clean_messages(state["messages"], limit=limit)
 
 
 def append_compat_turn(memory, user_message, assistant_reply):
@@ -1180,6 +1234,37 @@ def compact_sentence(text):
     return text[:240]
 
 
+def last_assistant_message(messages):
+    return next(
+        (
+            item.get("content", "")
+            for item in reversed(messages or [])
+            if isinstance(item, dict) and item.get("role") == "assistant"
+        ),
+        "",
+    )
+
+
+def truncate_message_to_budget(message, token_budget):
+    token_budget = int(token_budget or 0)
+    if token_budget <= 12 or not isinstance(message, dict):
+        return None
+    role = message.get("role")
+    content = str(message.get("content") or "")
+    if role not in ("user", "assistant") or not content:
+        return None
+    marker = "\n\n[truncated by token budget]"
+    max_chars = max(0, (token_budget - 8) * 4)
+    if max_chars <= len(marker) + 40:
+        return None
+    if len(content) <= max_chars:
+        return deepcopy(message)
+    return {
+        "role": role,
+        "content": content[: max_chars - len(marker)] + marker,
+    }
+
+
 def score_details(text):
     lower = str(text or "").lower()
     kept = []
@@ -1197,19 +1282,44 @@ def comparison_result_for(strategy_public):
     state = strategy_public.get("strategy_state") or {}
     metrics = state.get("metrics") or {}
     messages = strategy_public.get("messages") or []
-    final_reply = next(
-        (item.get("content", "") for item in reversed(messages) if item.get("role") == "assistant"),
-        "",
-    )
-    kept, lost = score_details(final_reply)
-    total_expected = max(1, len(EXPECTED_DETAILS))
+    branch_results = []
+    if strategy_public.get("active_strategy") == "branching":
+        for branch in state.get("branches") or []:
+            final_answer = branch.get("final_answer", "")
+            branch_kept, branch_lost = score_details(final_answer)
+            branch_results.append({
+                "id": branch.get("id", ""),
+                "name": branch.get("name", ""),
+                "final_answer": final_answer,
+                "retained_details": branch_kept,
+                "lost_details": branch_lost,
+                "retained_score": round(10 * len(branch_kept) / max(1, len(EXPECTED_DETAILS)), 1),
+            })
+    if branch_results:
+        final_reply = "\n\n".join(
+            f"{item['name']}: {item['final_answer']}"
+            for item in branch_results
+            if item.get("final_answer")
+        )
+        kept = sorted({detail for item in branch_results for detail in item["retained_details"]})
+        lost = sorted({detail for item in branch_results for detail in item["lost_details"]})
+        retained_score = round(
+            sum(item["retained_score"] for item in branch_results) / max(1, len(branch_results)),
+            1,
+        )
+    else:
+        final_reply = last_assistant_message(messages)
+        kept, lost = score_details(final_reply)
+        total_expected = max(1, len(EXPECTED_DETAILS))
+        retained_score = round(10 * len(kept) / total_expected, 1)
     return {
         "strategy_id": strategy_public.get("active_strategy"),
         "strategy_name": STRATEGY_BY_ID[strategy_public.get("active_strategy")]["name"],
         "final_answer": final_reply,
+        "branch_results": branch_results,
         "retained_details": kept,
         "lost_details": lost,
-        "retained_score": round(10 * len(kept) / total_expected, 1),
+        "retained_score": retained_score,
         "prompt_kept_details": report.get("kept_details", []),
         "prompt_lost_details": report.get("lost_details", []),
         "total_tokens": metrics.get("total_tokens", 0),
@@ -1269,6 +1379,30 @@ def normalize_archived_chats(value):
             "messages": messages,
         })
     return chats
+
+
+def normalize_demo_run(value):
+    if not isinstance(value, dict):
+        return {}
+    mode = str(value.get("mode") or "").strip()
+    if mode not in ("active", "all"):
+        return {}
+    strategy_id = str(value.get("strategy_id") or "").strip()
+    if strategy_id and strategy_id not in STRATEGY_BY_ID:
+        strategy_id = ""
+    try:
+        strategy_index = int(value.get("strategy_index") or 0)
+    except (TypeError, ValueError):
+        strategy_index = 0
+    return {
+        "mode": mode,
+        "strategy_id": strategy_id,
+        "strategy_index": max(0, min(strategy_index, len(STRATEGY_IDS) - 1)),
+        "progress": min(normalize_progress(value.get("progress", 0)), 12),
+        "results": list(value.get("results") or []) if isinstance(value.get("results"), list) else [],
+        "error": str(value.get("error") or ""),
+        "updated_at": str(value.get("updated_at") or utc_now()),
+    }
 
 
 def memory_schema_version(data):
@@ -1384,6 +1518,7 @@ def completion_metadata(completion):
 def agent_options():
     return {
         "model": DEFAULT_MODEL,
+        "max_tokens": DEFAULT_MAX_TOKENS,
         "provider": DEFAULT_PROVIDER,
         "include_reasoning": False,
         "reasoning": REASONING_EXCLUDED,

@@ -60,7 +60,7 @@ Last reviewed: 2026-06-12
   - `POST /api/demo/next` submits the next scripted demo message and may start a new chat at configured steps.
 - External integration: OpenRouter Chat Completions endpoint `https://openrouter.ai/api/v1/chat/completions` via explicit `httpx.post`.
 - OpenRouter payload: model, messages, usage include flag, and optional temperature, top_p, top_k, max_tokens, stop, response_format, provider, and reasoning fields.
-- Model behavior: the general REST client default is `z-ai/glm-4.7-flash`; `ChatAgent.agent_options()` passes `deepseek/deepseek-v4-flash` explicitly.
+- Model behavior: the general REST client default and `ChatAgent.agent_options()` both use `meta-llama/llama-3-8b-instruct` for the Day 10 demo.
 - Evidence: `llm_demo/server.py`, `llm_demo/agent.py`, `llm_demo/llm_client.py`, `llm_demo/demo_script.py`, `llm_demo/test_agent_persistence.py`, `docs/specs/assignment-7-context-persistence.md`.
 
 ## 7. Core Workflows
@@ -182,7 +182,7 @@ Last reviewed: 2026-06-12
 | --- | --- | --- | --- |
 | Root `README.md` says the current snapshot is Day 5, while active Day 7 docs, UI, and `llm_demo/README.md` say Day 7. | New agents or reviewers may follow stale guidance. | Update root README to Day 7 or point only to docs map. | `README.md`, `llm_demo/README.md`, `docs/specs/assignment-7-context-persistence.md` |
 | `.cursor/rules/aiadvent-project.mdc` docs map stops at older assignment docs. | Cursor users may miss Day 4-7 docs. | Refresh adapter while keeping it short. | `.cursor/rules/aiadvent-project.mdc`, `docs/README.md` |
-| `OPENROUTER_MODEL` does not override the agent's explicit `deepseek/deepseek-v4-flash` option. | Operators may expect env model changes to affect agent replies when they do not. | Decide whether agent model should remain fixed or respect env override, then document it. | `llm_demo/README.md`, `llm_demo/agent.py`, `llm_demo/llm_client.py` |
+| Day 10 demo pins `meta-llama/llama-3-8b-instruct` in `ChatAgent.agent_options()`. | Operators may expect `OPENROUTER_MODEL` to override agent replies, but the demo keeps a fixed small-context model for presentation consistency. | Keep the fixed model documented, or deliberately switch `agent_options()` to env-driven behavior later. | `llm_demo/README.md`, `llm_demo/agent.py`, `llm_demo/llm_client.py` |
 | File-backed memory has no lock or concurrency control. | Concurrent requests for one client could lose updates. | Keep demo single-user/local, or add locking/SQLite if concurrency becomes a requirement. | `llm_demo/agent.py` |
 | No authentication or rate limiting. | Public deployment would expose OpenRouter spend and client memory controls. | Treat as local demo only unless auth/rate limit are added. | `llm_demo/README.md` |
 | Memory-update call can fail or return invalid JSON. | Profile and summaries may lag behind visible chat. | Current code returns visible reply and surfaces warning; add tests and possibly retry/repair later. | `llm_demo/agent.py` |

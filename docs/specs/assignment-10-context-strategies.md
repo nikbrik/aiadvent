@@ -21,7 +21,9 @@ Additional strategies kept or added in this snapshot:
 
 The Flask app stores per-client JSON state in `llm_demo/data/clients/<client_id>.json`. Each strategy has its own isolated state under `strategies.<strategy_id>`, and only the active strategy's prompt builder controls what is sent to the model.
 
-The UI exposes strategy tabs, demo controls, a timeline, branch controls, prompt preview, context report, retained/lost details, and a comparison table. `Stop run` sets a per-client server flag, so long `Run active` / `Run all` executions stop between model calls instead of only aborting the browser request. Profile-memory token/cost totals include both the user-facing answer call and the auxiliary memory-update call.
+The UI exposes strategy tabs, demo controls, a timeline, branch controls, prompt preview, context report, retained/lost details, and a comparison table. `Run active`, `Run all`, and `Continue` use live step execution: the browser calls one scenario step at a time and re-renders transcript, prompt preview, metrics, and comparison data after each paid OpenRouter call. `Stop run` sets a per-client server flag, so long executions stop between model calls instead of only aborting the browser request. `Continue` resumes a failed or stopped `Run active` / `Run all` from the last saved successful step, so already paid OpenRouter calls are not repeated. Profile-memory token/cost totals include both the user-facing answer call and the auxiliary memory-update call.
+
+Review hardening in this snapshot: `Sliding Window` reports real dropped-message counters, `Tokenization and Cut` visibly truncates oversized history by a 320-token estimate, live `Run all` leaves the just-finished strategy visible before starting the next one, and `Branching` comparison rows include both branch finals.
 
 The scripted scenario has 12 messages about collecting a product requirements document for a family task app. Early details are intentionally important in the final answer, so the demo makes context loss visible.
 
@@ -41,3 +43,4 @@ For `Branching`, step 8 creates a checkpoint. Steps 9-10 continue `branch_a`; st
 - Keep `OPENROUTER_API_KEY` backend-only.
 - Do not use OpenAI SDK, LangChain, Streamlit, or Gradio.
 - Prefer fake-LLM tests before spending API key balance.
+- Default demo agent model is `meta-llama/llama-3-8b-instruct`: a real OpenRouter chat model with an 8k context window, chosen so context pressure is visible without using a huge long-context model.

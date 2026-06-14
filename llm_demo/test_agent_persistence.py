@@ -151,6 +151,26 @@ class AgentPersistenceTest(unittest.TestCase):
             self.assertEqual(snapshot["active_strategy"], "profile_summaries")
             self.assertEqual(snapshot["messages"], [{"role": "user", "content": "Меня зовут Никита."}])
 
+    def test_demo_run_resume_state_survives_restart(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            first_agent = ChatAgent(FileMemoryStore(data_dir), FakeLLM())
+            first_agent.save_demo_run(CLIENT_ID, {
+                "mode": "all",
+                "strategy_id": "sticky_facts",
+                "strategy_index": 1,
+                "progress": 7,
+                "results": [{"strategy_id": "sliding_window"}],
+                "error": "OpenRouter returned HTTP 401",
+            })
+
+            restarted_agent = ChatAgent(FileMemoryStore(data_dir), FakeLLM())
+            snapshot = restarted_agent.snapshot(CLIENT_ID)
+
+            self.assertEqual(snapshot["demo_run"]["mode"], "all")
+            self.assertEqual(snapshot["demo_run"]["strategy_index"], 1)
+            self.assertEqual(snapshot["demo_run"]["progress"], 7)
+            self.assertEqual(snapshot["demo_run"]["results"][0]["strategy_id"], "sliding_window")
+
 
 class ContextStrategyTest(unittest.TestCase):
     def test_strategies_do_not_share_prompt_blocks(self):
@@ -180,9 +200,12 @@ class ContextStrategyTest(unittest.TestCase):
             agent.respond(CLIENT_ID, "Финальный вопрос?")
 
             final_prompt = prompt_text(llm.calls[-1])
+            snapshot = agent.snapshot(CLIENT_ID)
             self.assertNotIn("Сообщение 0 EARLY_DETAIL", final_prompt)
             self.assertIn("Сообщение 3 EARLY_DETAIL", final_prompt)
-            self.assertLessEqual(len(agent.snapshot(CLIENT_ID)["messages"]), 4)
+            self.assertLessEqual(len(snapshot["messages"]), 4)
+            self.assertGreater(snapshot["context_report"]["discarded_messages"], 0)
+            self.assertGreater(snapshot["strategy_state"]["discarded_messages_total"], 0)
 
     def test_sliding_window_normalizes_loaded_state_to_window(self):
         with tempfile.TemporaryDirectory() as data_dir:
@@ -246,8 +269,13 @@ class ContextStrategyTest(unittest.TestCase):
             agent.respond(CLIENT_ID, "Проверь ветку A.")
 
             final_prompt = prompt_text(llm.calls[-1])
+            comparison = comparison_result_for(agent.snapshot(CLIENT_ID))
             self.assertIn("A_ONLY", final_prompt)
             self.assertNotIn("B_ONLY", final_prompt)
+            self.assertEqual(
+                {item["id"] for item in comparison["branch_results"]},
+                {"branch_a", "branch_b"},
+            )
 
     def test_branching_recovers_empty_branch_state(self):
         with tempfile.TemporaryDirectory() as data_dir:
@@ -284,7 +312,7 @@ class ContextStrategyTest(unittest.TestCase):
             agent.respond(CLIENT_ID, "Финальный вопрос?")
 
             final_prompt = prompt_text(llm.calls[-1])
-            self.assertNotIn("EARLY_DETAIL", final_prompt)
+            self.assertIn("[truncated by token budget]", final_prompt)
             self.assertIn("Короткий свежий контекст.", final_prompt)
 
     def test_context_leveling_builds_structured_levels(self):

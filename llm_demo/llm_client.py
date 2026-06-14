@@ -9,7 +9,7 @@ from http_log import log_exchange
 logger = logging.getLogger("llm_demo")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "z-ai/glm-4.7-flash"
+DEFAULT_MODEL = "meta-llama/llama-3-8b-instruct"
 TIMEOUT_SECONDS = 180.0
 REASONING_EXCLUDED = {"exclude": True}
 REASONING_ENABLED = {"enabled": True, "exclude": False}

@@ -73,7 +73,7 @@ http://localhost:5000
 | Переменная | Описание |
 | --- | --- |
 | `OPENROUTER_API_KEY` | Обязательный API-ключ OpenRouter |
-| `OPENROUTER_MODEL` | Модель OpenRouter, default `z-ai/glm-4.7-flash` |
+| `OPENROUTER_MODEL` | Модель OpenRouter, default `meta-llama/llama-3-8b-instruct` |
 | `HOST` | Host Flask, default `0.0.0.0` |
 | `PORT` | Port Flask, default `5000` |
 
